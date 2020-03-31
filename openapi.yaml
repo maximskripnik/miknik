@@ -1,0 +1,152 @@
+openapi: "3.0.2"
+info:
+  version: "0.0.3"
+  title: "Miknik Scheduler HTTP API"
+  contact:
+    email: "skripmaxand@gmail.com"
+paths:
+  /jobs:
+    post:
+      summary: "Create a Job"
+      requestBody:
+        description: "Job metadata"
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobCreate"
+      responses:
+        201:
+          $ref: "#/components/responses/Job"
+        400:
+          description: "Bad request"
+        500:
+          description: "Internal server error"
+    get:
+      summary: "List Jobs"
+      responses:
+        200:
+          description: "Jobs"
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Job"
+        500:
+          description: "Internal server error"
+  /jobs/{id}:
+    patch:
+      summary: "Update a Job"
+      requestBody:
+        description: "Job fields to update"
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobUpdate"
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        200:
+          $ref: "#/components/responses/Job"
+        404:
+          description: "Not found"
+        500:
+          description: "Internal server error"
+    delete:
+      summary: "Delete a Job"
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        200:
+          $ref: "#/components/responses/Job"
+        404:
+          description: "Not found"
+        500:
+          description: "Internal server error"
+  /resources:
+    get:
+      summary: "List available cluster resources"
+      responses:
+        200:
+          description: "Current cluster resources"
+        500:
+          description: "Internal server error"
+components:
+  schemas:
+    JobCreate:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+        resources:
+          type: "object"
+          properties:
+            mem:
+              type: "integer"
+            cpus:
+              type: "number"
+            disk:
+              type: "integer"
+        dockerImage:
+          type: "string"
+        cmd:
+          type: "array"
+          items:
+            type: "string"
+        env:
+          type: "object"
+          additionalProperties:
+            type: "string"
+      required:
+        - id
+        - resources
+        - dockerImage
+    Job:
+      type: "object"
+      allOf:
+        - $ref: "#/components/schemas/JobCreate"
+        - properties:
+            status:
+              type: "string"
+              enum:
+                - pending
+                - running
+                - completed
+                - failed
+                - canceled
+            error:
+              type: "string"
+            created:
+              type: "string"
+              format: "date-time"
+            updated:
+              type: "string"
+              format: "date-time"
+          required:
+            - status
+            - created
+            - updated
+    JobUpdate:
+      type: "object"
+      properties:
+        status:
+          type: "string"
+          enum:
+            - canceled
+  parameters:
+    JobId:
+      in: "path"
+      name: "id"
+      description: "Job id"
+      required: true
+      schema:
+        type: "string"
+  responses:
+    Job:
+      description: "Job response"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Job"
