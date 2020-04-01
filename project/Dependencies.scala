@@ -17,9 +17,13 @@ object Dependencies {
 
   object Test {
     val scalaTest = "org.scalatest" %% "scalatest" % "3.1.1"
+    val akkaHttpTestKit = "com.typesafe.akka" %% "akka-http-testkit" % "10.1.11"
+    val akkaStreamTestKit = "com.typesafe.akka" %% "akka-stream-testkit" % "2.6.4"
 
     val all = List(
-      scalaTest
+      scalaTest,
+      akkaHttpTestKit,
+      akkaStreamTestKit
     ).map(_ % Configurations.Test)
   }
 
