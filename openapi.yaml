@@ -73,6 +73,14 @@ paths:
           description: "Current cluster resources"
         500:
           description: "Internal server error"
+  /healthchck:
+    get:
+      summary: "Check if server is healthy"
+      responses:
+        200:
+          description: "Server healthy"
+        500:
+          description: "Server is not healthy"
 components:
   schemas:
     JobCreate:
