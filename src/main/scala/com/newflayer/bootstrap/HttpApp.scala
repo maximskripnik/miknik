@@ -1,16 +1,18 @@
-package com.newflayer
+package com.newflayer.bootstrap
 
+import com.newflayer.routes.SystemRoutes
+
+import scala.util.Failure
+import scala.util.Success
+
+import akka.actor.typed.ActorSystem
 import akka.actor.typed.Behavior
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.adapter._
-import akka.http.scaladsl.server.Directives._
-import akka.actor.typed.ActorSystem
 import akka.http.scaladsl.Http
-import com.newflayer.routes.SystemRoutes
-import akka.http.scaladsl.server.Route
-import scala.util.Success
-import scala.util.Failure
 import akka.http.scaladsl.Http.ServerBinding
+import akka.http.scaladsl.server.Directives._
+import akka.http.scaladsl.server.Route
 
 object HttpApp {
 

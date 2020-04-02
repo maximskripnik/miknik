@@ -9,11 +9,12 @@ lazy val root = (project in file("."))
     scalafixDependencies ++= Dependencies.Scalafix.all,
     scalacOptions ++= List(
       "-Wunused"
-    )
+    ),
+    coverageExcludedPackages := "com.newflayer.bootstrap"
   )
 
 ThisBuild / scalafixDependencies ++= Dependencies.Scalafix.all
 addCommandAlias(
-  "scalafixCheck",
+  "scalafixCheckAll",
   "; compile:scalafix --check ; test:scalafix --check"
 )
