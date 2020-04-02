@@ -4,15 +4,17 @@ addons:
   ssh_known_hosts: maximskripnik.com:1505
 
 script:
-  - sbt
-    scalafmtSbtCheck
-    scalafmtCheckAll
-    scalafixCheckAll
-    clean
-    coverage
-    test
-    coverageReport
-    coveralls
+  - sbt '
+    set org.scoverage.coveralls.Imports.CoverallsKeys.coverallsServiceName := Some("travis-pro");
+    scalafmtSbtCheck;
+    scalafmtCheckAll;
+    scalafixCheckAll;
+    clean;
+    coverage;
+    test;
+    coverageReport;
+    coveralls;
+    '
 
 before_deploy:
   - openssl aes-256-cbc -K $encrypted_233a0bc1cbfb_key -iv $encrypted_233a0bc1cbfb_iv
