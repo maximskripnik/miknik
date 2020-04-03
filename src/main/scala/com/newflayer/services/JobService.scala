@@ -15,9 +15,7 @@ import java.time.Instant
 import cats.data.EitherT
 import cats.implicits._
 
-class JobService(implicit ec: ExecutionContext) {
-
-  var jobs: Map[String, Job] = Map.empty
+class JobService(var jobs: Map[String, Job] = Map.empty)(implicit ec: ExecutionContext) {
 
   def create(
     id: String,
@@ -25,7 +23,7 @@ class JobService(implicit ec: ExecutionContext) {
     dockerImage: String,
     cmd: Option[List[String]],
     env: Option[Map[String, String]]
-  ): Future[Job] = Future.successful {
+  ): Future[Job] = {
     val now = Instant.now()
     val job = Job(
       id = id,
@@ -40,22 +38,21 @@ class JobService(implicit ec: ExecutionContext) {
     )
     jobs = jobs.updated(id, job)
     job
-  }
+  }.pure[Future]
 
-  def list(): Future[ListResult[Job]] =
-    Future.successful(ListResult(jobs.values.toList, jobs.size))
+  def list(): Future[ListResult[Job]] = ListResult(jobs.values.toList, jobs.size).pure[Future]
 
   def update(id: String, status: Option[JobStatus]): Future[Either[UpdateError, Job]] = {
     val result = for {
       job <- EitherT.fromOption[Future](jobs.get(id), UpdateError.NotFound(id))
-      _ <- EitherT.fromEither[Future] {
+      updated <- EitherT.fromEither[Future] {
         status match {
-          case None => ().asRight[UpdateError]
-          case Some(JobStatus.Canceled) => ().asRight[UpdateError]
+          case None => job.updated.asRight[UpdateError]
+          case Some(JobStatus.Canceled) => Instant.now().asRight[UpdateError]
           case Some(status) => UpdateError.BadStatus(status).asLeft
         }
       }
-      newJob = job.copy(status = status.getOrElse(job.status))
+      newJob = job.copy(status = status.getOrElse(job.status), updated = updated)
       _ = jobs = jobs.updated(id, newJob)
     } yield newJob
 
