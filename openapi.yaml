@@ -30,9 +30,14 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/Job"
+                allOf:
+                  - $ref: "#/components/schemas/ListResponse"
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Job"
         500:
           description: "Internal server error"
   /jobs/{id}:
@@ -60,7 +65,7 @@ paths:
         - $ref: "#/components/parameters/JobId"
       responses:
         200:
-          $ref: "#/components/responses/Job"
+          description: "Deleted"
         404:
           description: "Not found"
         500:
@@ -73,7 +78,7 @@ paths:
           description: "Current cluster resources"
         500:
           description: "Internal server error"
-  /healthchck:
+  /healthcheck:
     get:
       summary: "Check if server is healthy"
       responses:
@@ -83,6 +88,11 @@ paths:
           description: "Server is not healthy"
 components:
   schemas:
+    ListResponse:
+      type: "object"
+      properties:
+        count:
+          type: integer
     JobCreate:
       type: "object"
       properties:
@@ -117,13 +127,7 @@ components:
         - $ref: "#/components/schemas/JobCreate"
         - properties:
             status:
-              type: "string"
-              enum:
-                - pending
-                - running
-                - completed
-                - failed
-                - canceled
+              $ref: "#/components/schemas/JobStatus"
             error:
               type: "string"
             created:
@@ -140,9 +144,15 @@ components:
       type: "object"
       properties:
         status:
-          type: "string"
-          enum:
-            - canceled
+          $ref: "#/components/schemas/JobStatus"
+    JobStatus:
+      type: "string"
+      enum:
+        - pending
+        - running
+        - completed
+        - failed
+        - canceled
   parameters:
     JobId:
       in: "path"

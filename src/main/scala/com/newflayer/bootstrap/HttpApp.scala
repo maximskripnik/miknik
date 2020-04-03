@@ -1,7 +1,5 @@
 package com.newflayer.bootstrap
 
-import com.newflayer.routes.SystemRoutes
-
 import scala.util.Failure
 import scala.util.Success
 
@@ -11,9 +9,6 @@ import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.adapter._
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.Http.ServerBinding
-import akka.http.scaladsl.server.Directives._
-import akka.http.scaladsl.server.Route
-
 object HttpApp {
 
   def main(args: Array[String]): Unit = {
@@ -28,16 +23,14 @@ object HttpServer {
 
   def apply(host: String, port: Int): Behavior[Message] = Behaviors.setup { context =>
     implicit val actorSystem = context.system.toClassic
+    implicit val ec = context.executionContext
 
-    val systemRoutes = new SystemRoutes()
+    val serviceInstantiator = new ServiceInstantiator()
+    val routesInstantiator = new RoutesInstantiator(serviceInstantiator)
 
-    val routes = List(
-      systemRoutes
-    ).foldLeft[Route](reject)(_ ~ _.routes)
-
-    context.pipeToSelf(Http().bindAndHandle(routes, host, port)) {
+    context.pipeToSelf(Http().bindAndHandle(routesInstantiator.combineRoutes(), host, port)) {
       case Success(binding) => Started(binding)
-      case Failure(ex)      => throw new RuntimeException("Server failed to start", ex)
+      case Failure(ex) => throw new RuntimeException("Server failed to start", ex)
     }
 
     starting()

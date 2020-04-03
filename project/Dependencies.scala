@@ -6,12 +6,22 @@ object Dependencies {
     val akkaHttp = "com.typesafe.akka" %% "akka-http" % "10.1.11"
     val akkaStreams = "com.typesafe.akka" %% "akka-stream" % "2.6.4"
     val logback = "ch.qos.logback" % "logback-classic" % "1.2.3"
+    val cats = "org.typelevel" %% "cats-core" % "2.1.0"
+    val circe = "io.circe" %% "circe-core" % "0.12.3"
+    val circeGeneric = "io.circe" %% "circe-generic" % "0.12.3"
+    val akkaHttpCirce = "de.heikoseeberger" %% "akka-http-circe" % "1.31.0"
+    val chimney = "io.scalaland" %% "chimney" % "0.5.0"
 
     val all = List(
       akka,
       akkaHttp,
       akkaStreams,
-      logback
+      logback,
+      cats,
+      circe,
+      circeGeneric,
+      akkaHttpCirce,
+      chimney
     )
   }
 
