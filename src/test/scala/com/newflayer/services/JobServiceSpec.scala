@@ -1,13 +1,14 @@
 package com.newflayer.services
 
 import com.newflayer.BaseSpec
-import org.scalacheck.Arbitrary._
-import com.newflayer.domain.Resources
 import com.newflayer.domain.Job
 import com.newflayer.domain.JobGenerators
-import com.newflayer.domain.ResourcesGenerators
 import com.newflayer.domain.JobStatus
+import com.newflayer.domain.Resources
+import com.newflayer.domain.ResourcesGenerators
+
 import cats.data.NonEmptyList
+import org.scalacheck.Arbitrary._
 
 class JobServiceSpec extends BaseSpec with JobGenerators with ResourcesGenerators {
 
@@ -37,8 +38,8 @@ class JobServiceSpec extends BaseSpec with JobGenerators with ResourcesGenerator
   }
 
   "JobService#list" should {
-    "return existing jobs" in forAll { jobs: Set[Job] =>
-      new Setup(jobs.toList) {
+    "return existing jobs" in forAll { jobs: List[Job] =>
+      new Setup(jobs) {
         whenReady(service.list()) { listResult =>
           listResult.count shouldBe jobs.size
           listResult.items should contain allElementsOf jobs

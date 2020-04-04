@@ -1,9 +1,10 @@
 package com.newflayer.utils
 
+import java.time.Instant
+
+import cats.data.NonEmptyList
 import org.scalacheck.Arbitrary
 import org.scalacheck.Gen
-import java.time.Instant
-import cats.data.NonEmptyList
 
 trait CommonGenerators {
 
@@ -16,6 +17,10 @@ trait CommonGenerators {
 
   implicit def arbNonEmptyList[T: Arbitrary]: Arbitrary[NonEmptyList[T]] = Arbitrary {
     Gen.nonEmptyListOf(implicitly[Arbitrary[T]].arbitrary).map { list => NonEmptyList(list.head, list.tail) }
+  }
+
+  val nonEmptyAlphaNumString: Arbitrary[String] = Arbitrary {
+    arbNonEmptyList[Char](Arbitrary(Gen.alphaNumChar)).arbitrary.map(_.toList.mkString)
   }
 
 }

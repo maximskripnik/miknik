@@ -1,15 +1,17 @@
 package com.newflayer
 
-import org.scalatest.matchers.should.Matchers
-import org.scalatest.wordspec.AnyWordSpec
+import com.newflayer.utils.CommonGenerators
+
+import scala.concurrent.ExecutionContext
+
 import org.mockito.ArgumentMatchersSugar
 import org.mockito.IdiomaticMockito
-import org.scalatestplus.scalacheck.ScalaCheckDrivenPropertyChecks
-import org.scalatest.concurrent.ScalaFutures
-import scala.concurrent.ExecutionContext
-import com.newflayer.utils.CommonGenerators
-import org.scalatest.EitherValues
 import org.mockito.cats.IdiomaticMockitoCats
+import org.scalatest.EitherValues
+import org.scalatest.concurrent.ScalaFutures
+import org.scalatest.matchers.should.Matchers
+import org.scalatest.wordspec.AnyWordSpec
+import org.scalatestplus.scalacheck.ScalaCheckDrivenPropertyChecks
 
 trait BaseSpec
   extends AnyWordSpec

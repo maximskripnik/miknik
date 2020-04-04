@@ -6,6 +6,8 @@ import com.newflayer.routes.contracts.JobResponse
 import com.newflayer.routes.contracts.JobUpdateRequest
 import com.newflayer.routes.contracts.ListResponse
 import com.newflayer.services.JobService
+import com.newflayer.services.JobService.DeleteError
+import com.newflayer.services.JobService.UpdateError
 
 import akka.http.scaladsl.model.StatusCodes
 import akka.http.scaladsl.server.Directives._
@@ -32,14 +34,25 @@ class JobRoutes(service: JobService) extends Routes {
     path(Segment) { id =>
       (patch & entity(as[JobUpdateRequest])) { request =>
         onSuccess(service.update(id, request.status)) {
-          case Left(_) => complete(StatusCodes.BadRequest)
-          case Right(job) => complete(JobResponse(job))
+          case Left(error) =>
+            val code = error match {
+              case UpdateError.NotFound(_) => StatusCodes.NotFound
+              case UpdateError.BadStatus(_) => StatusCodes.BadRequest
+            }
+            complete(code)
+          case Right(job) =>
+            complete(JobResponse(job))
         }
       } ~
       delete {
         onSuccess(service.delete(id)) {
-          case Left(_) => complete(StatusCodes.BadRequest)
-          case Right(_) => complete()
+          case Left(error) =>
+            val code = error match {
+              case DeleteError.NotFound(_) => StatusCodes.NotFound
+            }
+            complete(code)
+          case Right(_) =>
+            complete()
         }
       }
     }

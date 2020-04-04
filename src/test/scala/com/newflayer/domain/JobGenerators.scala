@@ -1,11 +1,14 @@
 package com.newflayer.domain
 
+import com.newflayer.utils.CommonGenerators
+
+import scala.concurrent.duration.FiniteDuration
+
+import java.time.Instant
+
 import org.scalacheck.Arbitrary
 import org.scalacheck.Arbitrary._
 import org.scalacheck.Gen._
-import java.time.Instant
-import com.newflayer.utils.CommonGenerators
-import scala.concurrent.duration.FiniteDuration
 
 trait JobGenerators extends CommonGenerators with ResourcesGenerators {
 
@@ -37,5 +40,7 @@ trait JobGenerators extends CommonGenerators with ResourcesGenerators {
       updated = updated
     )
   }
+
+  implicit val arbJobList: Arbitrary[List[Job]] = Arbitrary(listOf(arbJob.arbitrary).map(_.distinctBy(_.id)))
 
 }
