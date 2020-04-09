@@ -1,6 +1,6 @@
 package com.newflayer.routes
 
-class SystemRoutesSpec extends BaseRouteSpec {
+class SystemRoutesSpec extends BaseRoutesSpec {
 
   val routes = new SystemRoutes().routes
 
