@@ -10,7 +10,7 @@ lazy val root = (project in file("."))
     scalacOptions ++= List(
       "-Wunused"
     ),
-    coverageExcludedPackages := "com.newflayer.bootstrap"
+    coverageExcludedPackages := "com.newflayer.miknik.bootstrap"
   )
 
 ThisBuild / scalafixDependencies ++= Dependencies.Scalafix.all
