@@ -11,6 +11,8 @@ object Dependencies {
     val circeGeneric = "io.circe" %% "circe-generic" % "0.12.3"
     val akkaHttpCirce = "de.heikoseeberger" %% "akka-http-circe" % "1.31.0"
     val chimney = "io.scalaland" %% "chimney" % "0.5.0"
+    val mesos = "org.apache.mesos" % "mesos" % "1.9.0"
+    val alpakkaSimpleCodecs = "com.lightbend.akka" %% "akka-stream-alpakka-simple-codecs" % "1.1.2"
 
     val all = List(
       akka,
@@ -21,7 +23,9 @@ object Dependencies {
       circe,
       circeGeneric,
       akkaHttpCirce,
-      chimney
+      chimney,
+      mesos,
+      alpakkaSimpleCodecs
     )
   }
 

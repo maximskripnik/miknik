@@ -136,6 +136,9 @@ components:
             updated:
               type: "string"
               format: "date-time"
+            completed:
+              type: "string"
+              format: "date-time"
           required:
             - status
             - created

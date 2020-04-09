@@ -11,5 +11,6 @@ case class Job(
   status: JobStatus,
   error: Option[String],
   created: Instant,
-  updated: Instant
+  updated: Instant,
+  completed: Option[Instant]
 )
