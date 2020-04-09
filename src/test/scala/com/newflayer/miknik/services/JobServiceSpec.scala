@@ -1,19 +1,27 @@
 package com.newflayer.miknik.services
 
 import com.newflayer.miknik.BaseSpec
+import com.newflayer.miknik.core.WorkloadSupervisorActor
+import com.newflayer.miknik.dao.JobDao
 import com.newflayer.miknik.domain.Job
 import com.newflayer.miknik.domain.JobGenerators
 import com.newflayer.miknik.domain.JobStatus
 import com.newflayer.miknik.domain.Resources
 import com.newflayer.miknik.domain.ResourcesGenerators
 
-import cats.data.NonEmptyList
+import java.time.Instant
+
+import akka.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
+import cats.implicits._
 import org.scalacheck.Arbitrary._
 
-class JobServiceSpec extends BaseSpec with JobGenerators with ResourcesGenerators {
+class JobServiceSpec extends ScalaTestWithActorTestKit with BaseSpec with JobGenerators with ResourcesGenerators {
 
-  abstract class Setup(data: List[Job] = List.empty) {
-    val service = new JobService(data.distinctBy(_.id).map(job => job.id -> job).toMap)
+  trait Setup {
+    val dao = mock[JobDao]
+    val workloadSupervisorProbe = createTestProbe[WorkloadSupervisorActor.Message]()
+    val workloadSupervisorActor = workloadSupervisorProbe.ref
+    val service = new JobService(dao, workloadSupervisorActor)
   }
 
   "JobService#create" should {
@@ -24,22 +32,22 @@ class JobServiceSpec extends BaseSpec with JobGenerators with ResourcesGenerator
           resources: Resources,
           dockerImage: String,
           cmd: Option[List[String]],
-          env: Option[Map[String, String]]
+          env: Option[Map[String, String]],
+          job: Job
         ) =>
-          whenReady(service.create(id, resources, dockerImage, cmd, env)) { job =>
-            job.id shouldBe id
-            job.resources shouldBe resources
-            job.dockerImage shouldBe dockerImage
-            job.cmd shouldBe cmd.getOrElse(List.empty)
-            job.env shouldBe env.getOrElse(Map.empty)
-          }
+          dao.create(*) returnsF job
+          val result = service.create(id, resources, dockerImage, cmd, env)
+          workloadSupervisorProbe.expectMessageType[WorkloadSupervisorActor.ScheduleJob]
+          whenReady(result)(_ shouldBe job)
       }
     }
   }
 
   "JobService#list" should {
-    "return existing jobs" in forAll { jobs: List[Job] =>
-      new Setup(jobs) {
+    "return existing jobs" in new Setup {
+      forAll { jobs: List[Job] =>
+        dao.list() returnsF jobs
+        dao.count() returnsF jobs.size
         whenReady(service.list()) { listResult =>
           listResult.count shouldBe jobs.size
           listResult.items should contain allElementsOf jobs
@@ -50,9 +58,14 @@ class JobServiceSpec extends BaseSpec with JobGenerators with ResourcesGenerator
 
   "JobService#update" should {
 
-    "set status to canceled and update the 'updated' field" in forAll { jobs: NonEmptyList[Job] =>
-      new Setup(jobs.toList) {
-        val job = jobs.head
+    "update the job and return the updated job when status is updated to canceled" in new Setup {
+      forAll { job: Job =>
+        dao.update(job.id, *) returnsF Some(
+          job.copy(
+            updated = Instant.now().plusMillis(1),
+            status = JobStatus.Canceled
+          )
+        )
         whenReady(service.update(job.id, status = Some(JobStatus.Canceled))) { result =>
           val updatedJob = result.right.value
           updatedJob.status shouldBe JobStatus.Canceled
@@ -61,27 +74,31 @@ class JobServiceSpec extends BaseSpec with JobGenerators with ResourcesGenerator
       }
     }
 
-    "do not update anything" in forAll { job: Job =>
-      new Setup(List(job)) {
+    "do not update anything, butn return a job" in new Setup {
+      forAll { job: Job =>
+        dao.get(job.id) returnsF Some(job)
         whenReady(service.update(job.id, status = None))(_.right.value shouldBe job)
       }
     }
 
-    "return error when job is not found" in forAll { (id: String, jobs: List[Job], status: Option[JobStatus]) =>
-      whenever(!jobs.exists(_.id === id)) {
-        new Setup(jobs) {
-          whenReady(service.update(id, status))(_.left.value shouldBe JobService.UpdateError.NotFound(id))
-        }
+    "return error when job is not found" in new Setup {
+
+      forAll { id: String =>
+        dao.update(id, *) returnsF None
+        whenReady(service.update(id, status = Some(JobStatus.Canceled)))(
+          _.left.value shouldBe JobService.UpdateError.NotFound(id)
+        )
       }
     }
 
     "return error when given bad status" in {
-      val statusGen = arbJobStatus.arbitrary.filterNot(_ === JobStatus.Canceled)
-      forAll(arbJob.arbitrary, statusGen) { (job: Job, status: JobStatus) =>
-        new Setup(List(job)) {
-          whenReady(service.update(job.id, status = Some(status)))(
-            _.left.value shouldBe JobService.UpdateError.BadStatus(status)
-          )
+      new Setup {
+        forAll { (id: String, status: JobStatus) =>
+          whenever(status != JobStatus.Canceled) {
+            whenReady(service.update(id, status = Some(status)))(
+              _.left.value shouldBe JobService.UpdateError.BadStatus(status)
+            )
+          }
         }
       }
     }
@@ -90,18 +107,17 @@ class JobServiceSpec extends BaseSpec with JobGenerators with ResourcesGenerator
 
   "JobService#delete" should {
 
-    "delete a job" in forAll { (jobs: NonEmptyList[Job]) =>
-      new Setup(jobs.toList) {
-        val id = jobs.head.id
+    "delete a job" in new Setup {
+      forAll { id: String =>
+        dao.delete(id) returnsF true
         whenReady(service.delete(id))(_.right.value shouldBe ())
       }
     }
 
-    "return error when job is not found" in forAll { (id: String, jobs: List[Job]) =>
-      whenever(!jobs.exists(_.id === id)) {
-        new Setup(jobs) {
-          whenReady(service.delete(id))(_.left.value shouldBe JobService.DeleteError.NotFound(id))
-        }
+    "return error when job is not found" in new Setup {
+      forAll { id: String =>
+        dao.delete(id) returnsF false
+        whenReady(service.delete(id))(_.left.value shouldBe JobService.DeleteError.NotFound(id))
       }
     }
 
