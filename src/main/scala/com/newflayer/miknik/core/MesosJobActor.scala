@@ -32,7 +32,7 @@ object MesosJobActor {
     taskId: TaskID,
     mesosGateway: MesosSchedulerGateway
   )(implicit ec: ExecutionContext): Behavior[Message] =
-    Behaviors.receivePartial[Message] {
+    Behaviors.receive[Message] {
       case (context, Update(mesosUpdate)) =>
         try {
           val mesosStatus = mesosUpdate.getStatus
@@ -59,7 +59,7 @@ object MesosJobActor {
               jobDao.update(jobId, _.copy(status = JobStatus.Failed, error = Option(mesosStatus.getMessage)))
               Behaviors.stopped
             case unknown @ TASK_KILLING =>
-              throw new RuntimeException(s"Unexpected status: '${unknown}'")
+              throw new IllegalArgumentException(s"Unexpected status: '${unknown}'")
           }
           if (mesosStatus.hasUuid) {
             mesosGateway.makeCall(
