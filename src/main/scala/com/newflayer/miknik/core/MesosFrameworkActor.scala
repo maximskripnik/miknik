@@ -19,6 +19,7 @@ import org.apache.mesos.v1.scheduler.Protos.Call.Subscribe
 import org.apache.mesos.v1.scheduler.Protos.Event
 import org.apache.mesos.v1.scheduler.Protos.Event.Offers
 import org.apache.mesos.v1.scheduler.Protos.Event.Update
+import org.slf4j.Logger
 
 object MesosFrameworkActor {
 
@@ -26,6 +27,7 @@ object MesosFrameworkActor {
   case class SubscribeToMesosUpdates(replyTo: ActorRef[Update]) extends Message
   case class SubscribeToMesosOffers(replyTo: ActorRef[Offers]) extends Message
   private case class MesosResponded(response: HttpResponse) extends Message
+  private case class FailedToSendSubscribeRequest(error: Throwable) extends Message
   private case class Subscribed(response: HttpResponse) extends Message
   private case class MesosEvent(mesosEvent: Event) extends Message
 
@@ -58,18 +60,8 @@ object MesosFrameworkActor {
             )
         )
         .onComplete {
-          case Success(response) =>
-            if (response.status == StatusCodes.OK) {
-              context.self ! MesosResponded(response)
-            } else {
-              val message = s"Bad response code from Mesos: $response" // TODO improve
-              context.log.error(message)
-              throw new RuntimeException(message)
-            }
-          case Failure(exception) =>
-            val message = s"Failed to send subscribe HTTP request to Mesos. Error: $exception" // TODO improve
-            context.log.error(message)
-            throw new RuntimeException(message)
+          case Success(response) => context.self ! MesosResponded(response)
+          case Failure(error) => context.self ! FailedToSendSubscribeRequest(error)
         }
       waitingForMesosResponse(State(mesosStreamIdSubscriber, mesosFrameworkIdSubscriber, None, None), mesosGateway)
     }
@@ -80,22 +72,33 @@ object MesosFrameworkActor {
   ): Behavior[Message] = Behaviors.setup { context =>
     Behaviors.receiveMessagePartial {
       case MesosResponded(response) =>
-        implicit val as = context.system
-        val mesosStreamId = response.headers.collectFirst {
-          case header if header.name == "Mesos-Stream-Id" => header.value
-        }.get
-        context.log.debug(s"my state: $state")
-        state.mesosStreamIdSubscriber ! mesosStreamId
-        response.entity.dataBytes
-          .via(RecordIOFraming.scanner())
-          .to(
-            Sink.foreach { byteString => context.self ! MesosEvent(Event.parseFrom(byteString.toArray[Byte])) }
+        if (response.status != StatusCodes.OK) {
+          failWithMessage(
+            s"Bad response code from Mesos: $response",
+            context.log
           )
-          .run()
-        waitingForSubscribe(
-          mesosStreamId,
-          state,
-          mesosGateway
+        } else {
+          implicit val as = context.system
+          val mesosStreamId = response.headers.collectFirst {
+            case header if header.name == "Mesos-Stream-Id" => header.value
+          }.get
+          state.mesosStreamIdSubscriber ! mesosStreamId
+          response.entity.dataBytes
+            .via(RecordIOFraming.scanner())
+            .to(
+              Sink.foreach { byteString => context.self ! MesosEvent(Event.parseFrom(byteString.toArray[Byte])) }
+            )
+            .run()
+          waitingForSubscribe(
+            mesosStreamId,
+            state,
+            mesosGateway
+          )
+        }
+      case FailedToSendSubscribeRequest(error) =>
+        failWithMessage(
+          s"Failed to send subscribe HTTP request to Mesos. Error: $error",
+          context.log
         )
       case SubscribeToMesosUpdates(replyTo) =>
         waitingForMesosResponse(
@@ -194,5 +197,10 @@ object MesosFrameworkActor {
           )
       }
     }
+
+  private def failWithMessage(msg: String, log: Logger): Nothing = {
+    log.error(msg)
+    throw new RuntimeException(msg)
+  }
 
 }

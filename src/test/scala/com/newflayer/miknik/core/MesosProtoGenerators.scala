@@ -8,8 +8,11 @@ import org.apache.mesos.v1.Protos.Offer
 import org.apache.mesos.v1.Protos.OfferID
 import org.apache.mesos.v1.Protos.Resource
 import org.apache.mesos.v1.Protos.TaskID
+import org.apache.mesos.v1.Protos.TaskState
+import org.apache.mesos.v1.Protos.TaskStatus
 import org.apache.mesos.v1.Protos.Value
 import org.apache.mesos.v1.scheduler.Protos.Event.Offers
+import org.apache.mesos.v1.scheduler.Protos.Event.Update
 import org.scalacheck.Arbitrary
 import org.scalacheck.Arbitrary._
 import org.scalacheck.Gen._
@@ -49,6 +52,25 @@ trait MesosProtoGenerators {
           buildScalarResource("mem", mem),
           buildScalarResource("disk", disk)
         ).asJava
+      )
+      .build()
+  }
+
+  implicit val argTaskState: Arbitrary[TaskState] = Arbitrary {
+    oneOf(TaskState.values())
+  }
+
+  implicit val arbUpdate: Arbitrary[Update] = Arbitrary {
+    for {
+      taskId <- arbitrary[TaskID]
+      taskState <- arbitrary[TaskState]
+    } yield Update
+      .newBuilder()
+      .setStatus(
+        TaskStatus
+          .newBuilder()
+          .setTaskId(taskId)
+          .setState(taskState)
       )
       .build()
   }
