@@ -3,6 +3,7 @@ package com.newflayer.miknik.core
 import com.newflayer.miknik.BaseSpec
 
 import scala.concurrent.Future
+import scala.concurrent.Promise
 import scala.concurrent.duration._
 
 import akka.actor.testkit.typed.scaladsl.LogCapturing
@@ -65,16 +66,16 @@ class MesosFrameworkActorSpec
       } yield builder.build
     }
 
-    "reply with mesos stream id, framework id and mesos updates and events to the subscribers when it receives them" in new Setup {
+    "reply with mesos params and mesos events to actors subscribed after mesos sent subscribe event" in new Setup {
       forAll(arbitrary[String], arbitrary[FrameworkID], Gen.listOfN(10, arbitrary[Event])) {
         (mesosStreamId: String, frameworkId: FrameworkID, events: List[Event]) =>
-          val (response, eventListener) = buildSubscribeResponse(
-            mesosStreamId,
-            frameworkId
-          )
+          val (response, eventListener) = buildSubscribeResponse(mesosStreamId)
           mesosGateway.makeAnonymousCall(*) returnsF response
           val actor = spawnActor()
+
           mesosStreamIdSubscriber.expectMessage(mesosStreamId)
+
+          eventListener ! buildSubscribedEvent(frameworkId)
           mesosFrameworkIdSubscriber.expectMessage(frameworkId)
 
           val offersSubscriber = createTestProbe[Offers]()
@@ -94,6 +95,84 @@ class MesosFrameworkActorSpec
       }
     }
 
+    "reply with mesos params and mesos events to actors subscribed before mesos sent subscribe event (but after mesos sent http resposne)" in new Setup {
+      forAll(arbitrary[String], arbitrary[FrameworkID], Gen.listOfN(10, arbitrary[Event])) {
+        (mesosStreamId: String, frameworkId: FrameworkID, events: List[Event]) =>
+          val (response, eventListener) = buildSubscribeResponse(mesosStreamId)
+          mesosGateway.makeAnonymousCall(*) returnsF response
+          val actor = spawnActor()
+
+          mesosStreamIdSubscriber.expectMessage(mesosStreamId)
+
+          val offersSubscriber = createTestProbe[Offers]()
+          val updatesSubscriber = createTestProbe[Update]()
+
+          actor ! MesosFrameworkActor.SubscribeToMesosOffers(offersSubscriber.ref)
+          actor ! MesosFrameworkActor.SubscribeToMesosUpdates(updatesSubscriber.ref)
+
+          eventListener ! buildSubscribedEvent(frameworkId)
+          mesosFrameworkIdSubscriber.expectMessage(frameworkId)
+
+          events.foreach { event =>
+            eventListener ! event
+            event.getType() match {
+              case Event.Type.OFFERS => offersSubscriber.expectMessage(1.minute, event.getOffers)
+              case Event.Type.UPDATE => updatesSubscriber.expectMessage(1.minute, event.getUpdate)
+              case _ => ()
+            }
+          }
+      }
+    }
+
+    "reply with mesos params and mesos events to actors subscribed before mesos sent http resposne" in new Setup {
+      forAll(arbitrary[String], arbitrary[FrameworkID], Gen.listOfN(10, arbitrary[Event])) {
+        (mesosStreamId: String, frameworkId: FrameworkID, events: List[Event]) =>
+          val (response, eventListener) = buildSubscribeResponse(mesosStreamId)
+          val responseP = Promise[HttpResponse]()
+          mesosGateway.makeAnonymousCall(*) returns responseP.future
+          val actor = spawnActor()
+
+          val offersSubscriber = createTestProbe[Offers]()
+          val updatesSubscriber = createTestProbe[Update]()
+
+          actor ! MesosFrameworkActor.SubscribeToMesosOffers(offersSubscriber.ref)
+          actor ! MesosFrameworkActor.SubscribeToMesosUpdates(updatesSubscriber.ref)
+
+          responseP.success(response)
+          mesosStreamIdSubscriber.expectMessage(mesosStreamId)
+
+          eventListener ! buildSubscribedEvent(frameworkId)
+          mesosFrameworkIdSubscriber.expectMessage(frameworkId)
+
+          events.foreach { event =>
+            eventListener ! event
+            event.getType() match {
+              case Event.Type.OFFERS => offersSubscriber.expectMessage(1.minute, event.getOffers)
+              case Event.Type.UPDATE => updatesSubscriber.expectMessage(1.minute, event.getUpdate)
+              case _ => ()
+            }
+          }
+      }
+    }
+
+    "decline mesos offers if no actor has subscribed for them" in forAll {
+      (mesosStreamId: String, frameworkId: FrameworkID, offers: Offers) =>
+        new Setup {
+          val (response, eventListener) = buildSubscribeResponse(mesosStreamId)
+          mesosGateway.makeAnonymousCall(*) returnsF response
+          spawnActor()
+
+          mesosStreamIdSubscriber.expectMessage(mesosStreamId)
+
+          eventListener ! buildSubscribedEvent(frameworkId)
+          mesosFrameworkIdSubscriber.expectMessage(frameworkId)
+
+          mesosGateway.declineOffers(*, *, *, *) returnsF HttpResponse()
+          eventListener ! Event.newBuilder().setType(Event.Type.OFFERS).setOffers(offers).build()
+          mesosGateway.declineOffers(*, *, *, *) wasCalled (once within 1.second)
+        }
+    }
+
     "fail if could not receive http response" in new Setup {
       mesosGateway.makeAnonymousCall(*) returns Future.failed(new RuntimeException("boom"))
       LoggingTestKit.error[RuntimeException].expect(spawnActor())
@@ -104,26 +183,35 @@ class MesosFrameworkActorSpec
       LoggingTestKit.error[RuntimeException].expect(spawnActor())
     }
 
+    "fail if first event from mesos was not subscribed" in new Setup {
+      forAll { mesosStreamId: String =>
+        val (response, eventListener) = buildSubscribeResponse(mesosStreamId)
+        mesosGateway.makeAnonymousCall(*) returnsF response
+        eventListener ! Event.newBuilder().setType(Event.Type.HEARTBEAT).build()
+        LoggingTestKit.error[RuntimeException].expect(spawnActor())
+      }
+    }
+
+    "fail when received a subscribed event for the second time" in new Setup {
+      forAll { (mesosStreamId: String, frameworkId: FrameworkID) =>
+        val (response, eventListener) = buildSubscribeResponse(mesosStreamId)
+        mesosGateway.makeAnonymousCall(*) returnsF response
+        val event = buildSubscribedEvent(frameworkId)
+        eventListener ! event
+        eventListener ! event
+        LoggingTestKit.error[RuntimeException].expect(spawnActor())
+      }
+    }
+
   }
 
   private def buildSubscribeResponse(
-    mesosStreamId: String,
-    frameworkId: FrameworkID
+    mesosStreamId: String
   ): (HttpResponse, ActorRef[Event]) = {
-    val firstEvent = Event
-      .newBuilder()
-      .setType(Event.Type.SUBSCRIBED)
-      .setSubscribed(
-        Subscribed
-          .newBuilder()
-          .setFrameworkId(frameworkId)
-      )
-      .build()
-
     val (eventListener, eventsSource) =
       Source.actorRef[Event](PartialFunction.empty, PartialFunction.empty, 100, OverflowStrategy.fail).preMaterialize()
 
-    val entitySource = Source.single(firstEvent).concat(eventsSource).map { protobuf =>
+    val entitySource = eventsSource.map { protobuf =>
       val bytes = protobuf.toByteArray
       ByteString(bytes.size.toString) ++ ByteString("\n") ++ ByteString(bytes) // build record IO event
     }
@@ -137,5 +225,16 @@ class MesosFrameworkActorSpec
 
     (response, eventListener.toTyped[Event])
   }
+
+  private def buildSubscribedEvent(frameworkId: FrameworkID): Event =
+    Event
+      .newBuilder()
+      .setType(Event.Type.SUBSCRIBED)
+      .setSubscribed(
+        Subscribed
+          .newBuilder()
+          .setFrameworkId(frameworkId)
+      )
+      .build()
 
 }

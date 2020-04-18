@@ -88,7 +88,7 @@ trait MesosProtoGenerators {
     alphaNumStr.map(fromStr)
   }
 
-  private def buildScalarResource(name: String, value: Double): Resource =
+  def buildScalarResource(name: String, value: Double): Resource =
     Resource
       .newBuilder()
       .setName(name)
