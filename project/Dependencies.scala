@@ -11,6 +11,8 @@ object Dependencies {
     val circeGeneric = "io.circe" %% "circe-generic" % "0.12.3"
     val akkaHttpCirce = "de.heikoseeberger" %% "akka-http-circe" % "1.31.0"
     val chimney = "io.scalaland" %% "chimney" % "0.5.0"
+    val mesos = "org.apache.mesos" % "mesos" % "1.9.0"
+    val alpakkaSimpleCodecs = "com.lightbend.akka" %% "akka-stream-alpakka-simple-codecs" % "1.1.2"
 
     val all = List(
       akka,
@@ -21,7 +23,9 @@ object Dependencies {
       circe,
       circeGeneric,
       akkaHttpCirce,
-      chimney
+      chimney,
+      mesos,
+      alpakkaSimpleCodecs
     )
   }
 
@@ -31,6 +35,7 @@ object Dependencies {
     val mockitocats = "org.mockito" %% "mockito-scala-cats" % "1.13.5"
     val scalaCheck = "org.scalacheck" %% "scalacheck" % "1.14.1"
     val scalaTestPlusScalaCheck = "org.scalatestplus" %% "scalacheck-1-14" % "3.1.0.0"
+    val akkaActorTestKit = "com.typesafe.akka" %% "akka-actor-testkit-typed" % "2.6.4"
     val akkaHttpTestKit = "com.typesafe.akka" %% "akka-http-testkit" % "10.1.11"
     val akkaStreamTestKit = "com.typesafe.akka" %% "akka-stream-testkit" % "2.6.4"
 
@@ -40,6 +45,7 @@ object Dependencies {
       mockitocats,
       scalaCheck,
       scalaTestPlusScalaCheck,
+      akkaActorTestKit,
       akkaHttpTestKit,
       akkaStreamTestKit
     ).map(_ % Configurations.Test)

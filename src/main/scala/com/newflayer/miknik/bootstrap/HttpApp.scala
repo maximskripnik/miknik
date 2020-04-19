@@ -1,5 +1,7 @@
 package com.newflayer.miknik.bootstrap
 
+import scala.concurrent.Await
+import scala.concurrent.duration._
 import scala.util.Failure
 import scala.util.Success
 
@@ -9,6 +11,7 @@ import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.adapter._
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.Http.ServerBinding
+
 object HttpApp {
 
   def main(args: Array[String]): Unit = {
@@ -25,8 +28,13 @@ object HttpServer {
     implicit val actorSystem = context.system.toClassic
     implicit val ec = context.executionContext
 
-    val serviceInstantiator = new ServiceInstantiator()
-    val routesInstantiator = new RoutesInstantiator(serviceInstantiator)
+    val mesosMasterUrl: String = ???
+
+    val servicesActor = context.spawnAnonymous(ServiceInstantiator(mesosMasterUrl))
+    val serviceInstantiator = new ServiceInstantiator(servicesActor)(context.system.scheduler)
+    val services = Await.result(serviceInstantiator.getServices(2.minutes), Duration.Inf)
+
+    val routesInstantiator = new RoutesInstantiator(services)
 
     context.pipeToSelf(Http().bindAndHandle(routesInstantiator.combineRoutes(), host, port)) {
       case Success(binding) => Started(binding)

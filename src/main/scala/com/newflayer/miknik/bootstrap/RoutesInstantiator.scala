@@ -5,7 +5,7 @@ import com.newflayer.miknik.routes._
 import akka.http.scaladsl.server.Directives._
 import akka.http.scaladsl.server.Route
 
-class RoutesInstantiator(services: ServiceInstantiator) {
+class RoutesInstantiator(services: Services) {
 
   val systemRoutes = new SystemRoutes()
   val jobRoutes = new JobRoutes(services.jobService)

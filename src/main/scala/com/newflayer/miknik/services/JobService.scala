@@ -1,5 +1,7 @@
 package com.newflayer.miknik.services
 
+import com.newflayer.miknik.core.WorkloadSupervisorActor
+import com.newflayer.miknik.dao.JobDao
 import com.newflayer.miknik.domain.Job
 import com.newflayer.miknik.domain.JobStatus
 import com.newflayer.miknik.domain.ListResult
@@ -12,10 +14,16 @@ import scala.concurrent.Future
 
 import java.time.Instant
 
+import akka.actor.typed.ActorRef
 import cats.data.EitherT
 import cats.implicits._
 
-class JobService(var jobs: Map[String, Job] = Map.empty)(implicit ec: ExecutionContext) {
+class JobService(
+  dao: JobDao,
+  workloadSupervisorActor: ActorRef[WorkloadSupervisorActor.Message]
+)(
+  implicit ec: ExecutionContext
+) {
 
   def create(
     id: String,
@@ -34,39 +42,47 @@ class JobService(var jobs: Map[String, Job] = Map.empty)(implicit ec: ExecutionC
       status = JobStatus.Pending,
       error = None,
       created = now,
-      updated = now
+      updated = now,
+      completed = None
     )
-    jobs = jobs.updated(id, job)
-    job
-  }.pure[Future]
+    dao.create(job).map { job =>
+      workloadSupervisorActor ! WorkloadSupervisorActor.ScheduleJob(job)
+      job
+    }
+  }
 
-  def list(): Future[ListResult[Job]] = ListResult(jobs.values.toList, jobs.size).pure[Future]
+  def list(): Future[ListResult[Job]] =
+    for {
+      jobs <- dao.list()
+      count <- dao.count()
+    } yield ListResult(jobs, count)
 
   def update(id: String, status: Option[JobStatus]): Future[Either[UpdateError, Job]] = {
     val result = for {
-      job <- EitherT.fromOption[Future](jobs.get(id), UpdateError.NotFound(id))
-      updated <- EitherT.fromEither[Future] {
+      updater <- EitherT.fromEither[Future] {
         status match {
-          case None => job.updated.asRight[UpdateError]
-          case Some(JobStatus.Canceled) => Instant.now().asRight[UpdateError]
-          case Some(status) => UpdateError.BadStatus(status).asLeft
+          case None =>
+            None.asRight[UpdateError]
+          case Some(JobStatus.Canceled) =>
+            Some((job: Job) => job.copy(updated = Instant.now(), status = JobStatus.Canceled)).asRight
+          case Some(status) =>
+            UpdateError.BadStatus(status).asLeft
         }
       }
-      newJob = job.copy(status = status.getOrElse(job.status), updated = updated)
-      _ = jobs = jobs.updated(id, newJob)
+      newJob <- EitherT.fromOptionF[Future, UpdateError, Job](
+        updater match {
+          case Some(updater) => dao.update(id, updater)
+          case None => dao.get(id)
+        },
+        UpdateError.NotFound(id)
+      )
     } yield newJob
 
     result.value
   }
 
-  def delete(id: String): Future[Either[DeleteError, Unit]] = {
-    val result = for {
-      job <- EitherT.fromOption[Future](jobs.get(id), DeleteError.NotFound(id))
-      _ = jobs = jobs.removed(id)
-    } yield ()
-
-    result.value
-  }
+  def delete(id: String): Future[Either[DeleteError, Unit]] =
+    dao.delete(id).map(Either.cond(_, (), DeleteError.NotFound(id)))
 
 }
 

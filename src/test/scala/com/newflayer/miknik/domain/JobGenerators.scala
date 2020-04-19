@@ -28,6 +28,7 @@ trait JobGenerators extends CommonGenerators with ResourcesGenerators {
       created <- arbitrary[Instant]
       plusUpdated <- arbitrary[FiniteDuration]
       updated <- arbitrary[Instant].map(_.plusNanos(plusUpdated.toNanos))
+      completed <- option(arbitrary[Instant].map(_.plusNanos(plusUpdated.toNanos + 100)))
     } yield Job(
       id = id,
       resources = resources,
@@ -37,7 +38,8 @@ trait JobGenerators extends CommonGenerators with ResourcesGenerators {
       status = status,
       error = error,
       created = created,
-      updated = updated
+      updated = updated,
+      completed = completed
     )
   }
 
