@@ -36,14 +36,14 @@ class MesosFrameworkActorSpec
   with MesosProtoGenerators {
 
   trait Setup {
-    val mesosStreamIdSubscriber = createTestProbe[String]()
-    val mesosFrameworkIdSubscriber = createTestProbe[FrameworkID]()
+    val mesosStreamIdSubscriberProbe = createTestProbe[String]()
+    val mesosFrameworkIdSubscriberProbe = createTestProbe[FrameworkID]()
     val mesosGateway = mock[MesosSchedulerGateway]
 
     def spawnActor() = testKit.spawn(
       MesosFrameworkActor(
-        mesosStreamIdSubscriber.ref,
-        mesosFrameworkIdSubscriber.ref,
+        mesosStreamIdSubscriberProbe.ref,
+        mesosFrameworkIdSubscriberProbe.ref,
         mesosGateway
       )
     )
@@ -73,10 +73,10 @@ class MesosFrameworkActorSpec
           mesosGateway.makeAnonymousCall(*) returnsF response
           val actor = spawnActor()
 
-          mesosStreamIdSubscriber.expectMessage(mesosStreamId)
+          mesosStreamIdSubscriberProbe.expectMessage(mesosStreamId)
 
           eventListener ! buildSubscribedEvent(frameworkId)
-          mesosFrameworkIdSubscriber.expectMessage(frameworkId)
+          mesosFrameworkIdSubscriberProbe.expectMessage(frameworkId)
 
           val offersSubscriber = createTestProbe[Offers]()
           val updatesSubscriber = createTestProbe[Update]()
@@ -102,7 +102,7 @@ class MesosFrameworkActorSpec
           mesosGateway.makeAnonymousCall(*) returnsF response
           val actor = spawnActor()
 
-          mesosStreamIdSubscriber.expectMessage(mesosStreamId)
+          mesosStreamIdSubscriberProbe.expectMessage(mesosStreamId)
 
           val offersSubscriber = createTestProbe[Offers]()
           val updatesSubscriber = createTestProbe[Update]()
@@ -111,7 +111,7 @@ class MesosFrameworkActorSpec
           actor ! MesosFrameworkActor.SubscribeToMesosUpdates(updatesSubscriber.ref)
 
           eventListener ! buildSubscribedEvent(frameworkId)
-          mesosFrameworkIdSubscriber.expectMessage(frameworkId)
+          mesosFrameworkIdSubscriberProbe.expectMessage(frameworkId)
 
           events.foreach { event =>
             eventListener ! event
@@ -139,10 +139,10 @@ class MesosFrameworkActorSpec
           actor ! MesosFrameworkActor.SubscribeToMesosUpdates(updatesSubscriber.ref)
 
           responseP.success(response)
-          mesosStreamIdSubscriber.expectMessage(mesosStreamId)
+          mesosStreamIdSubscriberProbe.expectMessage(mesosStreamId)
 
           eventListener ! buildSubscribedEvent(frameworkId)
-          mesosFrameworkIdSubscriber.expectMessage(frameworkId)
+          mesosFrameworkIdSubscriberProbe.expectMessage(frameworkId)
 
           events.foreach { event =>
             eventListener ! event
@@ -162,14 +162,14 @@ class MesosFrameworkActorSpec
           mesosGateway.makeAnonymousCall(*) returnsF response
           spawnActor()
 
-          mesosStreamIdSubscriber.expectMessage(mesosStreamId)
+          mesosStreamIdSubscriberProbe.expectMessage(mesosStreamId)
 
           eventListener ! buildSubscribedEvent(frameworkId)
-          mesosFrameworkIdSubscriber.expectMessage(frameworkId)
+          mesosFrameworkIdSubscriberProbe.expectMessage(frameworkId)
 
-          mesosGateway.declineOffers(*, *, *, *) returnsF HttpResponse()
+          mesosGateway.declineOffers(mesosStreamId, frameworkId, *, *) returnsF HttpResponse()
           eventListener ! Event.newBuilder().setType(Event.Type.OFFERS).setOffers(offers).build()
-          mesosGateway.declineOffers(*, *, *, *) wasCalled (once within 1.second)
+          mesosGateway.declineOffers(mesosStreamId, frameworkId, *, *) wasCalled (once within 1.second)
         }
     }
 

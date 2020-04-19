@@ -56,7 +56,7 @@ trait MesosProtoGenerators {
       .build()
   }
 
-  implicit val argTaskState: Arbitrary[TaskState] = Arbitrary {
+  implicit val arbTaskState: Arbitrary[TaskState] = Arbitrary {
     oneOf(TaskState.values())
   }
 
@@ -64,15 +64,7 @@ trait MesosProtoGenerators {
     for {
       taskId <- arbitrary[TaskID]
       taskState <- arbitrary[TaskState]
-    } yield Update
-      .newBuilder()
-      .setStatus(
-        TaskStatus
-          .newBuilder()
-          .setTaskId(taskId)
-          .setState(taskState)
-      )
-      .build()
+    } yield buildUpdate(taskId, taskState)
   }
 
   implicit val arbOffers: Arbitrary[Offers] = Arbitrary {
@@ -84,16 +76,27 @@ trait MesosProtoGenerators {
     }
   }
 
-  private def fromAlphaNumStr[T](fromStr: String => T): Arbitrary[T] = Arbitrary {
-    alphaNumStr.map(fromStr)
-  }
-
-  def buildScalarResource(name: String, value: Double): Resource =
+  protected def buildScalarResource(name: String, value: Double): Resource =
     Resource
       .newBuilder()
       .setName(name)
       .setType(Value.Type.SCALAR)
       .setScalar(Value.Scalar.newBuilder().setValue(value))
       .build()
+
+  protected def buildUpdate(taskId: TaskID, taskState: TaskState): Update =
+    Update
+      .newBuilder()
+      .setStatus(
+        TaskStatus
+          .newBuilder()
+          .setTaskId(taskId)
+          .setState(taskState)
+      )
+      .build()
+
+  private def fromAlphaNumStr[T](fromStr: String => T): Arbitrary[T] = Arbitrary {
+    alphaNumStr.map(fromStr)
+  }
 
 }

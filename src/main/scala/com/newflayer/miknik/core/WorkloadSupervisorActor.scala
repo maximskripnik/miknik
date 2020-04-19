@@ -36,8 +36,9 @@ object WorkloadSupervisorActor {
   case class ScheduleJob(job: Job) extends Message
   case class Offers(mesosOffers: MesosOffers) extends Message
   case class Update(mesosUpdate: MesosUpdate) extends Message
+  case class GetQueue(replyTo: ActorRef[List[Job]]) extends Message
   private case class OfferAccepted(jobId: String, taskId: TaskID, agentId: AgentID) extends Message
-  private case class OfferAcceptFailed(offerId: OfferID, error: Throwable) extends Message
+  private case class OfferAcceptFailed(offerId: OfferID, job: Job, error: Throwable) extends Message
   private case class WorkerIsDone(taskId: TaskID) extends Message
 
   private case class Context(
@@ -84,7 +85,7 @@ object WorkloadSupervisorActor {
                   val taskId = TaskID.newBuilder.setValue(job.id).build
                   acceptOffer(offer, job, taskId, context.log).onComplete {
                     case Success(_) => context.self ! OfferAccepted(job.id, taskId, offer.getAgentId)
-                    case Failure(e) => context.self ! OfferAcceptFailed(offer.getId, e)
+                    case Failure(e) => context.self ! OfferAcceptFailed(offer.getId, job, e)
                   }(context.executionContext)
                   ctx.mesosGateway.declineOffers(
                     ctx.mesosStreamId,
@@ -121,11 +122,18 @@ object WorkloadSupervisorActor {
             )
             context.watchWith(worker, WorkerIsDone(taskId))
             running(state.copy(workers = state.workers.updated(taskId, worker)))
-          case OfferAcceptFailed(offerId, error) =>
-            context.log.error(s"Failed to accept offer '$offerId'", error)
-            Behaviors.same
+          case OfferAcceptFailed(offerId, job, error) =>
+            context.log.error(
+              s"Failed to accept offer '$offerId' for job ''. Putting that job back to top of the queue",
+              error,
+              job.id
+            )
+            running(state.copy(queue = state.queue.prepended(job)))
           case WorkerIsDone(taskId) =>
             running(state.copy(workers = state.workers.removed(taskId)))
+          case GetQueue(replyTo) =>
+            replyTo ! state.queue.toList
+            Behaviors.same
         }
       }
 
