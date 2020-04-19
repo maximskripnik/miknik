@@ -36,7 +36,6 @@ class WorkloadSupervisorActorSpec
     val mesosStreamId: String,
     val frameworkId: FrameworkID
   ) {
-    // val mesosFrameworkProbe = createTestProbe[MesosFrameworkActor.Message]()
     val mesosGateway = mock[MesosSchedulerGateway]
     val jobDao = mock[JobDao]
     val actor = spawn(
@@ -98,7 +97,6 @@ class WorkloadSupervisorActorSpec
         setup.actor ! WorkloadSupervisorActor.Offers(mesosOffers)
         setup.mesosGateway.declineOffers(setup.mesosStreamId, setup.frameworkId, *, *) wasCalled (once within 1.second)
       }
-
     }
 
     "accept an offer if it satisfies queue head job resource requirements, spawn a child actor and forward mesos updates to it" in {
@@ -168,6 +166,57 @@ class WorkloadSupervisorActorSpec
         val probe = createTestProbe[List[Job]]()
         setup.actor ! WorkloadSupervisorActor.GetQueue(probe.ref)
         probe.expectMessage(headQueueJob :: queue)
+      }
+    }
+
+    case class CancelTestParams(setup: Setup, queue: NonEmptyList[Job], toCancelIndex: Int)
+
+    implicit val arbParams: Arbitrary[CancelTestParams] = Arbitrary {
+      for {
+        setup <- arbitrary[Setup]
+        queue <- arbitrary[NonEmptyList[Job]]
+        toCancelIndex <- Gen.choose(0, queue.length - 1)
+      } yield CancelTestParams(setup, queue, toCancelIndex)
+    }
+
+    "cancel a queued job" in {
+      forAll(arbParams.arbitrary) {
+        case CancelTestParams(setup, queue, toCancelIndex) =>
+          queue.toList.foreach(setup.actor ! WorkloadSupervisorActor.ScheduleJob(_))
+
+          val toCancel = queue.toList(toCancelIndex)
+          val probe1 = createTestProbe[Boolean]()
+          setup.actor ! WorkloadSupervisorActor.CancelJob(toCancel.id, probe1.ref)
+          probe1.expectMessage(true)
+
+          val expectedJobs = queue.toList.filter(_.id != toCancel.id)
+          val probe2 = createTestProbe[List[Job]]()
+          setup.actor ! WorkloadSupervisorActor.GetQueue(probe2.ref)
+          probe2.expectMessage(expectedJobs)
+      }
+    }
+
+    "cancel a running job" in {
+      forAll { (setup: Setup, queue: List[Job], oldestJob: Job, offer: Offer) =>
+        val mesosResources = List(
+          buildScalarResource("cpus", oldestJob.resources.cpus),
+          buildScalarResource("mem", oldestJob.resources.mem),
+          buildScalarResource("disk", oldestJob.resources.disk)
+        )
+        val mesosOffers = Offers.newBuilder.clearOffers
+          .addOffers(offer.toBuilder.clearResources.addAllResources(mesosResources.asJava))
+          .build
+
+        setup.actor ! WorkloadSupervisorActor.ScheduleJob(oldestJob)
+        queue.toList.foreach(setup.actor ! WorkloadSupervisorActor.ScheduleJob(_))
+        setup.mesosGateway.makeCall(setup.mesosStreamId, *) returnsF HttpResponse()
+
+        setup.actor ! WorkloadSupervisorActor.Offers(mesosOffers)
+        setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
+
+        val probe = createTestProbe[Boolean]()
+        setup.actor ! WorkloadSupervisorActor.CancelJob(oldestJob.id, probe.ref)
+        probe.expectMessage(true)
       }
     }
 

@@ -6,8 +6,8 @@ import com.newflayer.miknik.domain.Job
 import com.newflayer.miknik.domain.JobStatus
 import com.newflayer.miknik.domain.ListResult
 import com.newflayer.miknik.domain.Resources
+import com.newflayer.miknik.services.JobService.CancelError
 import com.newflayer.miknik.services.JobService.DeleteError
-import com.newflayer.miknik.services.JobService.UpdateError
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -15,6 +15,9 @@ import scala.concurrent.Future
 import java.time.Instant
 
 import akka.actor.typed.ActorRef
+import akka.actor.typed.Scheduler
+import akka.actor.typed.scaladsl.AskPattern._
+import akka.util.Timeout
 import cats.data.EitherT
 import cats.implicits._
 
@@ -22,7 +25,9 @@ class JobService(
   dao: JobDao,
   workloadSupervisorActor: ActorRef[WorkloadSupervisorActor.Message]
 )(
-  implicit ec: ExecutionContext
+  implicit ec: ExecutionContext,
+  scheduler: Scheduler,
+  jobCancelTimeout: Timeout
 ) {
 
   def create(
@@ -57,26 +62,17 @@ class JobService(
       count <- dao.count()
     } yield ListResult(jobs, count)
 
-  def update(id: String, status: Option[JobStatus]): Future[Either[UpdateError, Job]] = {
+  def cancel(id: String): Future[Either[CancelError, Unit]] = {
     val result = for {
-      updater <- EitherT.fromEither[Future] {
-        status match {
-          case None =>
-            None.asRight[UpdateError]
-          case Some(JobStatus.Canceled) =>
-            Some((job: Job) => job.copy(updated = Instant.now(), status = JobStatus.Canceled)).asRight
-          case Some(status) =>
-            UpdateError.BadStatus(status).asLeft
-        }
-      }
-      newJob <- EitherT.fromOptionF[Future, UpdateError, Job](
-        updater match {
-          case Some(updater) => dao.update(id, updater)
-          case None => dao.get(id)
-        },
-        UpdateError.NotFound(id)
+      job <- EitherT.fromOptionF(dao.get(id), CancelError.NotFound(id))
+      _ <- EitherT.cond[Future](
+        List(JobStatus.Pending, JobStatus.Running).contains(job.status),
+        (),
+        CancelError.BadStatus(job.status)
       )
-    } yield newJob
+      reply <- EitherT.right[CancelError](workloadSupervisorActor.ask(WorkloadSupervisorActor.CancelJob(id, _)))
+      _ = assert(reply)
+    } yield ()
 
     result.value
   }
@@ -88,10 +84,10 @@ class JobService(
 
 object JobService {
 
-  sealed trait UpdateError
-  object UpdateError {
-    case class NotFound(id: String) extends UpdateError
-    case class BadStatus(status: JobStatus) extends UpdateError
+  sealed trait CancelError
+  object CancelError {
+    case class NotFound(id: String) extends CancelError
+    case class BadStatus(status: JobStatus) extends CancelError
   }
 
   sealed trait DeleteError

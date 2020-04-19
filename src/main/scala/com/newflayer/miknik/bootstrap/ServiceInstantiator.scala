@@ -8,6 +8,7 @@ import com.newflayer.miknik.services.JobService
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
+import scala.concurrent.duration._
 
 import akka.actor.typed.ActorRef
 import akka.actor.typed.Behavior
@@ -112,7 +113,8 @@ object ServiceInstantiator {
     )
 
     val services = new Services {
-      val jobService = new JobService(jobDao, workloadSupervisorActor)
+      val jobService =
+        new JobService(jobDao, workloadSupervisorActor)(ec, context.system.scheduler, jobCancelTimeout = 1.minute)
     }
 
     servicesSubscribers.foreach(_ ! services)

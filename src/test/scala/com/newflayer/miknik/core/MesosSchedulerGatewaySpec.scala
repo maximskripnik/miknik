@@ -27,12 +27,13 @@ class MesosSchedulerGatewaySpec extends ScalaTestWithActorTestKit with BaseSpec 
   }
 
   "MesosSchedulerGateway#makeCall" should {
-    "wrap mesos Call message and send the http request with it and with mesos stream id" in new Setup {
-      forAll { mesosStreamId: String =>
-        val response = HttpResponse(StatusCodes.OK)
-        http.singleRequest(*, *, *, *) returnsF response
-        whenReady(mesosGateway.makeCall(mesosStreamId, Call.newBuilder()))(_ shouldBe response)
-      }
+    "wrap mesos Call message and send the http request with it and with mesos stream id" in forAll {
+      mesosStreamId: String =>
+        new Setup {
+          val response = HttpResponse(StatusCodes.OK)
+          http.singleRequest(*, *, *, *) returnsF response
+          whenReady(mesosGateway.makeCall(mesosStreamId, Call.newBuilder()))(_ shouldBe response)
+        }
     }
   }
 
@@ -45,14 +46,15 @@ class MesosSchedulerGatewaySpec extends ScalaTestWithActorTestKit with BaseSpec 
   }
 
   "MesosSchedulerGateway#declineOffers" should {
-    "wrap mesos Decline message and send the http request with it" in new Setup {
-      forAll { (mesosStreamId: String, frameworkId: FrameworkID, offers: List[Offer]) =>
-        val response = HttpResponse(StatusCodes.OK)
-        http.singleRequest(*, *, *, *) returnsF response
-        whenReady(mesosGateway.declineOffers(mesosStreamId, frameworkId, offers, testKit.system.log))(
-          _ shouldBe response
-        )
-      }
+    "wrap mesos Decline message and send the http request with it" in forAll {
+      (mesosStreamId: String, frameworkId: FrameworkID, offers: List[Offer]) =>
+        new Setup {
+          val response = HttpResponse(StatusCodes.OK)
+          http.singleRequest(*, *, *, *) returnsF response
+          whenReady(mesosGateway.declineOffers(mesosStreamId, frameworkId, offers, testKit.system.log))(
+            _ shouldBe response
+          )
+        }
     }
   }
 

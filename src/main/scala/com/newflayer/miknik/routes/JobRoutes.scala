@@ -3,11 +3,10 @@ package com.newflayer.miknik.routes
 import com.newflayer.miknik.domain.Job
 import com.newflayer.miknik.routes.contracts.JobCreateRequest
 import com.newflayer.miknik.routes.contracts.JobResponse
-import com.newflayer.miknik.routes.contracts.JobUpdateRequest
 import com.newflayer.miknik.routes.contracts.ListResponse
 import com.newflayer.miknik.services.JobService
+import com.newflayer.miknik.services.JobService.CancelError
 import com.newflayer.miknik.services.JobService.DeleteError
-import com.newflayer.miknik.services.JobService.UpdateError
 
 import akka.http.scaladsl.model.StatusCodes
 import akka.http.scaladsl.server.Directives._
@@ -31,20 +30,8 @@ class JobRoutes(service: JobService) extends Routes {
         onSuccess(service.list()) { listResult => complete(ListResponse(JobResponse(_: Job))(listResult)) }
       }
     } ~
-    path(Segment) { id =>
-      (patch & entity(as[JobUpdateRequest])) { request =>
-        onSuccess(service.update(id, request.status)) {
-          case Left(error) =>
-            val code = error match {
-              case UpdateError.NotFound(_) => StatusCodes.NotFound
-              case UpdateError.BadStatus(_) => StatusCodes.BadRequest
-            }
-            complete(code)
-          case Right(job) =>
-            complete(JobResponse(job))
-        }
-      } ~
-      delete {
+    pathPrefix(Segment) { id =>
+      (pathEnd & delete) {
         onSuccess(service.delete(id)) {
           case Left(error) =>
             val code = error match {
@@ -53,6 +40,18 @@ class JobRoutes(service: JobService) extends Routes {
             complete(code)
           case Right(_) =>
             complete()
+        }
+      } ~
+      (path("cancel") & post) {
+        onSuccess(service.cancel(id)) {
+          case Left(error) =>
+            val code = error match {
+              case CancelError.NotFound(_) => StatusCodes.NotFound
+              case CancelError.BadStatus(_) => StatusCodes.BadRequest
+            }
+            complete(code)
+          case Right(()) =>
+            complete(StatusCodes.Accepted)
         }
       }
     }

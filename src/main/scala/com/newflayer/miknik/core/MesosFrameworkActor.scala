@@ -19,7 +19,6 @@ import org.apache.mesos.v1.scheduler.Protos.Call.Subscribe
 import org.apache.mesos.v1.scheduler.Protos.Event
 import org.apache.mesos.v1.scheduler.Protos.Event.Offers
 import org.apache.mesos.v1.scheduler.Protos.Event.Update
-import org.slf4j.Logger
 
 object MesosFrameworkActor {
 
@@ -73,10 +72,7 @@ object MesosFrameworkActor {
     Behaviors.receiveMessagePartial {
       case MesosResponded(response) =>
         if (response.status != StatusCodes.OK) {
-          failWithMessage(
-            s"Bad response code from Mesos: $response",
-            context.log
-          )
+          throw new RuntimeException(s"Bad response code from Mesos: $response")
         } else {
           implicit val as = context.system
           val mesosStreamId = response.headers.collectFirst {
@@ -96,10 +92,7 @@ object MesosFrameworkActor {
           )
         }
       case FailedToSendSubscribeRequest(error) =>
-        failWithMessage(
-          s"Failed to send subscribe HTTP request to Mesos. Error: $error",
-          context.log
-        )
+        throw new RuntimeException(s"Failed to send subscribe HTTP request to Mesos. Error: $error")
       case SubscribeToMesosUpdates(replyTo) =>
         waitingForMesosResponse(
           state.copy(mesosUpdatesSubscriber = Some(replyTo)),
@@ -197,10 +190,5 @@ object MesosFrameworkActor {
           )
       }
     }
-
-  private def failWithMessage(msg: String, log: Logger): Nothing = {
-    log.error(msg)
-    throw new RuntimeException(msg)
-  }
 
 }
