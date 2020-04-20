@@ -28,9 +28,9 @@ object HttpServer {
     implicit val actorSystem = context.system.toClassic
     implicit val ec = context.executionContext
 
-    val mesosMasterUrl: String = ???
+    val mesosMasterAddress: String = ???
 
-    val servicesActor = context.spawnAnonymous(ServiceInstantiator(mesosMasterUrl))
+    val servicesActor = context.spawnAnonymous(ServiceInstantiator(mesosMasterAddress))
     val serviceInstantiator = new ServiceInstantiator(servicesActor)(context.system.scheduler)
     val services = Await.result(serviceInstantiator.getServices(2.minutes), Duration.Inf)
 

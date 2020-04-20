@@ -41,24 +41,6 @@ paths:
         500:
           description: "Internal server error"
   /jobs/{id}:
-    patch:
-      summary: "Update a Job"
-      requestBody:
-        description: "Job fields to update"
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/JobUpdate"
-      parameters:
-        - $ref: "#/components/parameters/JobId"
-      responses:
-        200:
-          $ref: "#/components/responses/Job"
-        404:
-          description: "Not found"
-        500:
-          description: "Internal server error"
     delete:
       summary: "Delete a Job"
       parameters:
@@ -66,6 +48,18 @@ paths:
       responses:
         200:
           description: "Deleted"
+        404:
+          description: "Not found"
+        500:
+          description: "Internal server error"
+  /jobs/{id}/cancel:
+    post:
+      summary: "Cancel a Job"
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        202:
+          description: "Job cancel process started"
         404:
           description: "Not found"
         500:
@@ -143,11 +137,6 @@ components:
             - status
             - created
             - updated
-    JobUpdate:
-      type: "object"
-      properties:
-        status:
-          $ref: "#/components/schemas/JobStatus"
     JobStatus:
       type: "string"
       enum:

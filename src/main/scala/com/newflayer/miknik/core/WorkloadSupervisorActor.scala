@@ -2,6 +2,7 @@ package com.newflayer.miknik.core
 
 import com.newflayer.miknik.dao.JobDao
 import com.newflayer.miknik.domain.Job
+import com.newflayer.miknik.domain.JobStatus
 
 import scala.collection.immutable.Queue
 import scala.concurrent.ExecutionContext
@@ -34,11 +35,18 @@ object WorkloadSupervisorActor {
 
   sealed trait Message
   case class ScheduleJob(job: Job) extends Message
+  case class CancelJob(jobId: String, replyTo: ActorRef[Boolean]) extends Message
   case class Offers(mesosOffers: MesosOffers) extends Message
   case class Update(mesosUpdate: MesosUpdate) extends Message
   case class GetQueue(replyTo: ActorRef[List[Job]]) extends Message
-  private case class OfferAccepted(jobId: String, taskId: TaskID, agentId: AgentID) extends Message
-  private case class OfferAcceptFailed(offerId: OfferID, job: Job, error: Throwable) extends Message
+  private case class OfferAccepted(
+    offerId: OfferID,
+    jobId: String,
+    taskId: TaskID,
+    agentId: AgentID,
+    newQueue: Queue[Job]
+  ) extends Message
+  private case class OfferAcceptFailed(offerId: OfferID, jobId: String, error: Throwable) extends Message
   private case class WorkerIsDone(taskId: TaskID) extends Message
 
   private case class Context(
@@ -48,7 +56,14 @@ object WorkloadSupervisorActor {
     jobDao: JobDao,
     ec: ExecutionContext
   )
-  private case class State(queue: Queue[Job], workers: Map[TaskID, ActorRef[MesosJobActor.Message]])
+
+  private type JobId = String
+
+  private case class State(
+    queue: Queue[Job],
+    workers: Map[TaskID, (ActorRef[MesosJobActor.Message], JobId)],
+    jobIdIndex: Map[JobId, TaskID]
+  )
 
   def apply(
     mesosStreamId: String,
@@ -63,7 +78,7 @@ object WorkloadSupervisorActor {
       mesosFrameworkActor ! MesosFrameworkActor.SubscribeToMesosOffers(actorContext.messageAdapter(Offers(_)))
       mesosFrameworkActor ! MesosFrameworkActor.SubscribeToMesosUpdates(actorContext.messageAdapter(Update(_)))
 
-      running(State(Queue.empty, Map.empty))(context)
+      running(State(Queue.empty, Map.empty, Map.empty))(context)
     }
 
   private def running(state: State)(implicit ctx: Context): Behavior[Message] =
@@ -72,6 +87,34 @@ object WorkloadSupervisorActor {
         message match {
           case ScheduleJob(job) =>
             running(state.copy(queue = state.queue.enqueue(job)))
+          case CancelJob(jobId, replyTo) =>
+            state.jobIdIndex.get(jobId) match {
+              case Some(taskId) =>
+                state.workers.get(taskId) match {
+                  case Some((worker, _)) =>
+                    worker ! MesosJobActor.Cancel(context.system.ignoreRef)
+                    replyTo ! true
+                    Behaviors.same
+                  case None =>
+                    context.log.error(
+                      s"Job index points to a task that has no worker. Job id: '$jobId'. Task id: '$taskId'"
+                    )
+                    replyTo ! false
+                    Behaviors.same
+                }
+              case None =>
+                val (leftJobs, right) = state.queue.span(_.id != jobId)
+                right.dequeueOption match {
+                  case Some((_, rightJobs)) =>
+                    context.log.debug("Job '{}' has been cancelled while in queue", jobId)
+                    ctx.jobDao.update(jobId, _.copy(status = JobStatus.Canceled))(ctx.ec)
+                    replyTo ! true
+                    running(state.copy(queue = leftJobs.appendedAll(rightJobs)))
+                  case None =>
+                    replyTo ! false
+                    Behaviors.same
+                }
+            }
           case Offers(mesosOffers) =>
             val offers = mesosOffers.getOffersList.asScala.toList
             if (state.queue.isEmpty) {
@@ -84,8 +127,10 @@ object WorkloadSupervisorActor {
                   val (job, newQueue) = state.queue.dequeue
                   val taskId = TaskID.newBuilder.setValue(job.id).build
                   acceptOffer(offer, job, taskId, context.log).onComplete {
-                    case Success(_) => context.self ! OfferAccepted(job.id, taskId, offer.getAgentId)
-                    case Failure(e) => context.self ! OfferAcceptFailed(offer.getId, job, e)
+                    case Success(_) =>
+                      context.self ! OfferAccepted(offer.getId, job.id, taskId, offer.getAgentId, newQueue)
+                    case Failure(e) =>
+                      context.self ! OfferAcceptFailed(offer.getId, job.id, e)
                   }(context.executionContext)
                   ctx.mesosGateway.declineOffers(
                     ctx.mesosStreamId,
@@ -93,7 +138,7 @@ object WorkloadSupervisorActor {
                     offers.filterNot(_.getId == offer.getId),
                     context.log
                   )
-                  running(state.copy(queue = newQueue))
+                  Behaviors.same
                 case None =>
                   ctx.mesosGateway.declineOffers(ctx.mesosStreamId, ctx.frameworkId, offers, context.log)
                   Behaviors.same
@@ -102,13 +147,14 @@ object WorkloadSupervisorActor {
           case Update(mesosUpdate) =>
             val taskId = mesosUpdate.getStatus.getTaskId
             state.workers.get(taskId) match {
-              case Some(worker) =>
+              case Some((worker, _)) =>
                 worker ! MesosJobActor.Update(mesosUpdate)
               case None =>
                 context.log.warn(s"Received an update for an unknown task: '$taskId'")
             }
             Behaviors.same
-          case OfferAccepted(jobId, taskId, agentId) =>
+          case OfferAccepted(offerId, jobId, taskId, agentId, newQueue) =>
+            context.log.debug(s"Accepted offer '$offerId' for job '$jobId'. Spawning child actor")
             val worker = context.spawnAnonymous(
               MesosJobActor(
                 jobId,
@@ -121,16 +167,29 @@ object WorkloadSupervisorActor {
               )(ctx.ec)
             )
             context.watchWith(worker, WorkerIsDone(taskId))
-            running(state.copy(workers = state.workers.updated(taskId, worker)))
-          case OfferAcceptFailed(offerId, job, error) =>
-            context.log.error(
-              s"Failed to accept offer '$offerId' for job ''. Putting that job back to top of the queue",
-              error,
-              job.id
+            running(
+              state.copy(
+                queue = newQueue,
+                workers = state.workers.updated(taskId, worker -> jobId),
+                jobIdIndex = state.jobIdIndex.updated(jobId, taskId)
+              )
             )
-            running(state.copy(queue = state.queue.prepended(job)))
-          case WorkerIsDone(taskId) =>
-            running(state.copy(workers = state.workers.removed(taskId)))
+          case OfferAcceptFailed(offerId, jobId, error) =>
+            context.log.error(
+              s"Failed to accept offer '$offerId' for job '$jobId'. ",
+              error
+            )
+            Behaviors.same
+          case message @ WorkerIsDone(taskId) =>
+            state.workers.get(taskId) match {
+              case Some((_, jobId)) =>
+                running(
+                  state.copy(workers = state.workers.removed(taskId), jobIdIndex = state.jobIdIndex.removed(jobId))
+                )
+              case None =>
+                context.log.error(s"Received a message '$message' from an unknown worker.")
+                Behaviors.same
+            }
           case GetQueue(replyTo) =>
             replyTo ! state.queue.toList
             Behaviors.same

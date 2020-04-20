@@ -6,6 +6,8 @@ import scala.concurrent.duration.FiniteDuration
 
 import java.time.Instant
 
+import cats.data.NonEmptyList
+import cats.implicits._
 import org.scalacheck.Arbitrary
 import org.scalacheck.Arbitrary._
 import org.scalacheck.Gen._
@@ -44,5 +46,7 @@ trait JobGenerators extends CommonGenerators with ResourcesGenerators {
   }
 
   implicit val arbJobList: Arbitrary[List[Job]] = Arbitrary(listOf(arbJob.arbitrary).map(_.distinctBy(_.id)))
+
+  implicit val arbJobNel: Arbitrary[NonEmptyList[Job]] = arbNelDistinctBy(_.id)
 
 }

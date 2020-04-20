@@ -3,11 +3,16 @@ package com.newflayer.miknik.core
 import com.newflayer.miknik.BaseSpec
 import com.newflayer.miknik.dao.JobDao
 
+import scala.concurrent.Future
+import scala.concurrent.duration._
+
 import java.util.UUID
 
-import akka.actor.testkit.typed.scaladsl.BehaviorTestKit
 import akka.actor.testkit.typed.scaladsl.LogCapturing
+import akka.actor.testkit.typed.scaladsl.LoggingTestKit
 import akka.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
+import akka.http.scaladsl.model.HttpResponse
+import cats.implicits._
 import com.google.protobuf.ByteString
 import org.apache.mesos.v1.Protos.AgentID
 import org.apache.mesos.v1.Protos.FrameworkID
@@ -30,7 +35,7 @@ class MesosJobActorSpec extends ScalaTestWithActorTestKit with BaseSpec with Log
   ) {
     val jobDao = mock[JobDao]
     val mesosGateway = mock[MesosSchedulerGateway]
-    val actorTestKit = BehaviorTestKit(
+    val actor = spawn(
       MesosJobActor(
         jobId = jobId,
         jobDao = jobDao,
@@ -60,23 +65,23 @@ class MesosJobActorSpec extends ScalaTestWithActorTestKit with BaseSpec with Log
       Gen.oneOf(TaskState.TASK_STARTING, TaskState.TASK_STAGING)
     ) { (setup, taskState) =>
       val mesosUpdate = buildMesosUpdate(taskState)(setup)
-      setup.actorTestKit.run(MesosJobActor.Update(mesosUpdate))
+      setup.actor ! MesosJobActor.Update(mesosUpdate)
       setup.jobDao wasNever called
-      setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled once
+      setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
     }
 
     "acknowledge TASK_RUNNING mesos update and update the job" in forAll { implicit setup: Setup =>
       val mesosUpdate = buildMesosUpdate(TaskState.TASK_RUNNING)
-      setup.actorTestKit.run(MesosJobActor.Update(mesosUpdate))
-      setup.jobDao.update(setup.jobId, *) wasCalled once
-      setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled once
+      setup.actor ! MesosJobActor.Update(mesosUpdate)
+      setup.jobDao.update(setup.jobId, *) wasCalled (once within 1.second)
+      setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
     }
 
     "acknowledge TASK_FINISHED mesos update and update the job" in forAll { implicit setup: Setup =>
       val mesosUpdate = buildMesosUpdate(TaskState.TASK_FINISHED)
-      setup.actorTestKit.run(MesosJobActor.Update(mesosUpdate))
-      setup.jobDao.update(setup.jobId, *) wasCalled once
-      setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled once
+      setup.actor ! MesosJobActor.Update(mesosUpdate)
+      setup.jobDao.update(setup.jobId, *) wasCalled (once within 1.second)
+      setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
     }
 
     "acknowledge TASK_UNREACHABLE, TASK_LOST or TASK_UNKNOWN mesos update, but do nothing" in forAll(
@@ -84,9 +89,9 @@ class MesosJobActorSpec extends ScalaTestWithActorTestKit with BaseSpec with Log
       Gen.oneOf(TaskState.TASK_UNREACHABLE, TaskState.TASK_LOST, TaskState.TASK_UNKNOWN)
     ) { (setup, taskState) =>
       val mesosUpdate = buildMesosUpdate(taskState)(setup)
-      setup.actorTestKit.run(MesosJobActor.Update(mesosUpdate))
+      setup.actor ! MesosJobActor.Update(mesosUpdate)
       setup.jobDao wasNever called
-      setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled once
+      setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
     }
 
     "acknowledge TASK_ERROR, TASK_GONE_BY_OPERATOR, TASK_DROPPED, TASK_KILLED, TASK_GONE or TASK_FAILED mesos update and update the job" in forAll(
@@ -101,18 +106,46 @@ class MesosJobActorSpec extends ScalaTestWithActorTestKit with BaseSpec with Log
       )
     ) { (setup, taskState) =>
       val mesosUpdate = buildMesosUpdate(taskState)(setup)
-      setup.actorTestKit.run(MesosJobActor.Update(mesosUpdate))
-      setup.jobDao.update(setup.jobId, *) wasCalled once
-      setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled once
+      setup.actor ! MesosJobActor.Update(mesosUpdate)
+      setup.jobDao.update(setup.jobId, *) wasCalled (once within 1.second)
+      setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
     }
 
     "fail to process TASK_KILLING mesos update, but update the job" in forAll { implicit setup: Setup =>
       val mesosUpdate = buildMesosUpdate(TaskState.TASK_KILLING)
-      intercept[IllegalArgumentException] {
-        setup.actorTestKit.run(MesosJobActor.Update(mesosUpdate))
+      LoggingTestKit.error[MesosJobActor.MessageHandlingException].expect {
+        setup.actor ! MesosJobActor.Update(mesosUpdate)
       }
-      setup.jobDao.update(setup.jobId, *) wasCalled once
+      setup.jobDao.update(setup.jobId, *) wasCalled (once within 1.second)
       setup.mesosGateway.makeCall(*, *) wasNever called
+    }
+
+    "send a kill call to mesos and update the job once mesos sends TASK_KILLED update" in forAll {
+      implicit setup: Setup =>
+        setup.mesosGateway.makeCall(setup.mesosStreamId, *) returnsF HttpResponse()
+
+        val probe = createTestProbe[Unit]()
+        setup.actor ! MesosJobActor.Cancel(probe.ref)
+
+        setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
+
+        setup.actor ! MesosJobActor.Cancel(probe.ref)
+        probe.expectNoMessage()
+
+        val mesosUpdate = buildMesosUpdate(TaskState.TASK_KILLED)
+        setup.actor ! MesosJobActor.Update(mesosUpdate)
+        setup.jobDao.update(setup.jobId, *) wasCalled (once within 1.second)
+        probe.expectMessage(())
+    }
+
+    "fail if could not send a kill call to mesos" in forAll { implicit setup: Setup =>
+      setup.mesosGateway.makeCall(setup.mesosStreamId, *) returns Future.failed(new RuntimeException("boom"))
+
+      LoggingTestKit.error[MesosJobActor.MessageHandlingException].expect {
+        setup.actor ! MesosJobActor.Cancel(createTestProbe[Unit]().ref)
+      }
+      setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
+      setup.jobDao.update(setup.jobId, *) wasCalled (once within 1.second)
     }
 
   }

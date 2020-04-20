@@ -7,12 +7,11 @@ import com.newflayer.miknik.domain.ListResult
 import com.newflayer.miknik.routes.contracts.JobCreateRequest
 import com.newflayer.miknik.routes.contracts.JobResponse
 import com.newflayer.miknik.routes.contracts.JobResponse._
-import com.newflayer.miknik.routes.contracts.JobUpdateRequest
 import com.newflayer.miknik.routes.contracts.ListResponse
 import com.newflayer.miknik.routes.contracts.Resources
 import com.newflayer.miknik.services.JobService
+import com.newflayer.miknik.services.JobService.CancelError
 import com.newflayer.miknik.services.JobService.DeleteError
-import com.newflayer.miknik.services.JobService.UpdateError
 
 import akka.http.scaladsl.model.StatusCodes
 import akka.http.scaladsl.server.Route
@@ -42,8 +41,6 @@ class JobRoutesSpec extends BaseRoutesSpec with JobGenerators {
 
   implicit val jobCreateRequestEncoder: Encoder[JobCreateRequest] = deriveEncoder[JobCreateRequest]
 
-  implicit val jobUpdateRequestEncoder: Encoder[JobUpdateRequest] = deriveEncoder[JobUpdateRequest]
-
   trait Setup {
     val service = mock[JobService]
     val routes = Route.seal(new JobRoutes(service).routes)
@@ -51,8 +48,8 @@ class JobRoutesSpec extends BaseRoutesSpec with JobGenerators {
 
   "POST /jobs" should {
 
-    "return 201 with a job" in new Setup {
-      forAll { job: Job =>
+    "return 201 with a job" in forAll { job: Job =>
+      new Setup {
         val jobRequest = JobCreateRequest(
           id = job.id,
           resources = Resources(job.resources),
@@ -77,8 +74,8 @@ class JobRoutesSpec extends BaseRoutesSpec with JobGenerators {
   }
 
   "GET /jobs" should {
-    "return 200 with a list of jobs" in new Setup {
-      forAll { jobs: List[Job] =>
+    "return 200 with a list of jobs" in forAll { jobs: List[Job] =>
+      new Setup {
         service.list returnsF ListResult(jobs)
         Get("/jobs") ~> routes ~> check {
           status shouldBe StatusCodes.OK
@@ -90,39 +87,32 @@ class JobRoutesSpec extends BaseRoutesSpec with JobGenerators {
     }
   }
 
-  "PATCH /jobs/{id}" should {
+  "POST /jobs/{id}/cancel" should {
 
-    "return 200 with an updated job" in new Setup {
-      forAll(nonEmptyAlphaNumString.arbitrary, arbitrary[Job]) { (id: String, _job: Job) =>
-        val job = _job.copy(id = id)
-        val updatedStatus = JobStatus.Canceled
-        val updatedJob = job.copy(status = updatedStatus)
-        service.update(job.id, Some(updatedStatus)) returnsF Right(updatedJob)
-        Patch(s"/jobs/${job.id}", JobUpdateRequest(status = Some(updatedStatus))) ~> routes ~> check {
-          status shouldBe StatusCodes.OK
-          responseAs[Json].as[JobResponse] shouldBe Right(JobResponse(job.copy(status = updatedStatus)))
+    "return 202" in forAll(arbNonEmptyAlphaNumString.arbitrary) { (id: String) =>
+      new Setup {
+        service.cancel(id) returnsF ().asRight
+        Post(s"/jobs/${id}/cancel") ~> routes ~> check {
+          status shouldBe StatusCodes.Accepted
         }
       }
     }
 
-    "return 400 when body is invalid" in new Setup {
-      Patch("/jobs/id", Json.obj("status" -> Json.fromString("bar"))) ~> routes ~> check {
-        status shouldBe StatusCodes.BadRequest
+    "return 404 when service returns not found error" in forAll(arbNonEmptyAlphaNumString.arbitrary) { (id: String) =>
+      new Setup {
+        service.cancel(id) returnsF CancelError.NotFound(id).asLeft
+        Post(s"/jobs/${id}/cancel") ~> routes ~> check {
+          status shouldBe StatusCodes.NotFound
+        }
       }
     }
 
-    "return 404 when service returns not found error" in new Setup {
-      service.update("id", None) returnsF Left(UpdateError.NotFound("id"))
-      Patch(s"/jobs/id", JobUpdateRequest(status = None)) ~> routes ~> check {
-        status shouldBe StatusCodes.NotFound
-      }
-    }
-
-    "return 400 when service returns bad status error" in new Setup {
-      val updatedStatus = JobStatus.Completed
-      service.update("id", Some(updatedStatus)) returnsF Left(UpdateError.BadStatus(updatedStatus))
-      Patch(s"/jobs/id", JobUpdateRequest(status = Some(updatedStatus))) ~> routes ~> check {
-        status shouldBe StatusCodes.BadRequest
+    "return 400 when service returns bad status error" in forAll(arbNonEmptyAlphaNumString.arbitrary) { (id: String) =>
+      new Setup {
+        service.cancel(id) returnsF CancelError.BadStatus(JobStatus.Completed).asLeft
+        Post(s"/jobs/${id}/cancel") ~> routes ~> check {
+          status shouldBe StatusCodes.BadRequest
+        }
       }
     }
 
@@ -130,8 +120,8 @@ class JobRoutesSpec extends BaseRoutesSpec with JobGenerators {
 
   "DELETE /jobs/{id}" should {
 
-    "return 200" in new Setup {
-      forAll(nonEmptyAlphaNumString.arbitrary) { id =>
+    "return 200" in forAll(arbNonEmptyAlphaNumString.arbitrary) { id =>
+      new Setup {
         service.delete(id) returnsF Right(())
         Delete(s"/jobs/$id") ~> routes ~> check {
           status shouldBe StatusCodes.OK
