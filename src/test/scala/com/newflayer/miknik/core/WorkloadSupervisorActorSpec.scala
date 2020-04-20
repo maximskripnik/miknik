@@ -122,8 +122,10 @@ class WorkloadSupervisorActorSpec
         setup.mesosGateway.makeCall(setup.mesosStreamId, *) returnsF HttpResponse()
         setup.mesosGateway.declineOffers(setup.mesosStreamId, setup.frameworkId, *, *) returnsF HttpResponse()
 
-        setup.actor ! WorkloadSupervisorActor.Offers(mesosOffers)
-        setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
+        LoggingTestKit.debug("Accepted offer").expect {
+          setup.actor ! WorkloadSupervisorActor.Offers(mesosOffers)
+          setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
+        }
 
         val probe = createTestProbe[List[Job]]()
         setup.actor ! WorkloadSupervisorActor.GetQueue(probe.ref)
@@ -169,17 +171,18 @@ class WorkloadSupervisorActorSpec
       }
     }
 
-    case class CancelTestParams(setup: Setup, queue: NonEmptyList[Job], toCancelIndex: Int)
-
-    implicit val arbParams: Arbitrary[CancelTestParams] = Arbitrary {
-      for {
-        setup <- arbitrary[Setup]
-        queue <- arbitrary[NonEmptyList[Job]]
-        toCancelIndex <- Gen.choose(0, queue.length - 1)
-      } yield CancelTestParams(setup, queue, toCancelIndex)
-    }
-
     "cancel a queued job" in {
+
+      case class CancelTestParams(setup: Setup, queue: NonEmptyList[Job], toCancelIndex: Int)
+
+      implicit val arbParams: Arbitrary[CancelTestParams] = Arbitrary {
+        for {
+          setup <- arbitrary[Setup]
+          queue <- arbitrary[NonEmptyList[Job]]
+          toCancelIndex <- Gen.choose(0, queue.length - 1)
+        } yield CancelTestParams(setup, queue, toCancelIndex)
+      }
+
       forAll(arbParams.arbitrary) {
         case CancelTestParams(setup, queue, toCancelIndex) =>
           queue.toList.foreach(setup.actor ! WorkloadSupervisorActor.ScheduleJob(_))

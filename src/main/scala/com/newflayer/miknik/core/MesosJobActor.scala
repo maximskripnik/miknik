@@ -30,6 +30,8 @@ object MesosJobActor {
   private object KillCallSuccess extends Message
   private case class KillCallFailure(error: Throwable) extends Message
 
+  private[core] case class MessageHandlingException(message: Message, cause: Throwable) extends RuntimeException
+
   def apply(
     jobId: String,
     jobDao: JobDao,
@@ -160,7 +162,7 @@ object MesosJobActor {
                 status = JobStatus.Failed
               )
             )
-            throw new RuntimeException(s"Error handling message '$message'. Job will be marked as failed", ex)
+            throw new MessageHandlingException(message, ex)
         }
     }
 

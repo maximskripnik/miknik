@@ -39,8 +39,14 @@ object WorkloadSupervisorActor {
   case class Offers(mesosOffers: MesosOffers) extends Message
   case class Update(mesosUpdate: MesosUpdate) extends Message
   case class GetQueue(replyTo: ActorRef[List[Job]]) extends Message
-  private case class OfferAccepted(jobId: String, taskId: TaskID, agentId: AgentID) extends Message
-  private case class OfferAcceptFailed(offerId: OfferID, job: Job, error: Throwable) extends Message
+  private case class OfferAccepted(
+    offerId: OfferID,
+    jobId: String,
+    taskId: TaskID,
+    agentId: AgentID,
+    newQueue: Queue[Job]
+  ) extends Message
+  private case class OfferAcceptFailed(offerId: OfferID, jobId: String, error: Throwable) extends Message
   private case class WorkerIsDone(taskId: TaskID) extends Message
 
   private case class Context(
@@ -121,8 +127,10 @@ object WorkloadSupervisorActor {
                   val (job, newQueue) = state.queue.dequeue
                   val taskId = TaskID.newBuilder.setValue(job.id).build
                   acceptOffer(offer, job, taskId, context.log).onComplete {
-                    case Success(_) => context.self ! OfferAccepted(job.id, taskId, offer.getAgentId)
-                    case Failure(e) => context.self ! OfferAcceptFailed(offer.getId, job, e)
+                    case Success(_) =>
+                      context.self ! OfferAccepted(offer.getId, job.id, taskId, offer.getAgentId, newQueue)
+                    case Failure(e) =>
+                      context.self ! OfferAcceptFailed(offer.getId, job.id, e)
                   }(context.executionContext)
                   ctx.mesosGateway.declineOffers(
                     ctx.mesosStreamId,
@@ -130,7 +138,7 @@ object WorkloadSupervisorActor {
                     offers.filterNot(_.getId == offer.getId),
                     context.log
                   )
-                  running(state.copy(queue = newQueue))
+                  Behaviors.same
                 case None =>
                   ctx.mesosGateway.declineOffers(ctx.mesosStreamId, ctx.frameworkId, offers, context.log)
                   Behaviors.same
@@ -145,7 +153,8 @@ object WorkloadSupervisorActor {
                 context.log.warn(s"Received an update for an unknown task: '$taskId'")
             }
             Behaviors.same
-          case OfferAccepted(jobId, taskId, agentId) =>
+          case OfferAccepted(offerId, jobId, taskId, agentId, newQueue) =>
+            context.log.debug(s"Accepted offer '$offerId' for job '$jobId'. Spawning child actor")
             val worker = context.spawnAnonymous(
               MesosJobActor(
                 jobId,
@@ -160,17 +169,17 @@ object WorkloadSupervisorActor {
             context.watchWith(worker, WorkerIsDone(taskId))
             running(
               state.copy(
+                queue = newQueue,
                 workers = state.workers.updated(taskId, worker -> jobId),
                 jobIdIndex = state.jobIdIndex.updated(jobId, taskId)
               )
             )
-          case OfferAcceptFailed(offerId, job, error) =>
+          case OfferAcceptFailed(offerId, jobId, error) =>
             context.log.error(
-              s"Failed to accept offer '$offerId' for job ''. Putting that job back to top of the queue",
-              error,
-              job.id
+              s"Failed to accept offer '$offerId' for job '$jobId'. ",
+              error
             )
-            running(state.copy(queue = state.queue.prepended(job)))
+            Behaviors.same
           case message @ WorkerIsDone(taskId) =>
             state.workers.get(taskId) match {
               case Some((_, jobId)) =>

@@ -113,7 +113,7 @@ class MesosJobActorSpec extends ScalaTestWithActorTestKit with BaseSpec with Log
 
     "fail to process TASK_KILLING mesos update, but update the job" in forAll { implicit setup: Setup =>
       val mesosUpdate = buildMesosUpdate(TaskState.TASK_KILLING)
-      LoggingTestKit.error[RuntimeException].expect {
+      LoggingTestKit.error[MesosJobActor.MessageHandlingException].expect {
         setup.actor ! MesosJobActor.Update(mesosUpdate)
       }
       setup.jobDao.update(setup.jobId, *) wasCalled (once within 1.second)
@@ -141,7 +141,7 @@ class MesosJobActorSpec extends ScalaTestWithActorTestKit with BaseSpec with Log
     "fail if could not send a kill call to mesos" in forAll { implicit setup: Setup =>
       setup.mesosGateway.makeCall(setup.mesosStreamId, *) returns Future.failed(new RuntimeException("boom"))
 
-      LoggingTestKit.error[RuntimeException].expect {
+      LoggingTestKit.error[MesosJobActor.MessageHandlingException].expect {
         setup.actor ! MesosJobActor.Cancel(createTestProbe[Unit]().ref)
       }
       setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)

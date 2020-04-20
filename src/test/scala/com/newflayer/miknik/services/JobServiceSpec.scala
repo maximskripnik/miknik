@@ -45,8 +45,8 @@ class JobServiceSpec extends ScalaTestWithActorTestKit with BaseSpec with JobGen
   }
 
   "JobService#list" should {
-    "return existing jobs" in new Setup {
-      forAll { jobs: List[Job] =>
+    "return existing jobs" in forAll { jobs: List[Job] =>
+      new Setup {
         dao.list() returnsF jobs
         dao.count() returnsF jobs.size
         whenReady(service.list()) { listResult =>
@@ -59,8 +59,11 @@ class JobServiceSpec extends ScalaTestWithActorTestKit with BaseSpec with JobGen
 
   "JobService#cancel" should {
 
-    "cancel a non-terminated job" in new Setup {
-      forAll(arbitrary[Job], Gen.oneOf(JobStatus.Pending, JobStatus.Running)) { (job, status) =>
+    "cancel a non-terminated job" in forAll(
+      arbitrary[Job],
+      Gen.oneOf(JobStatus.Pending, JobStatus.Running)
+    ) { (job, status) =>
+      new Setup {
         dao.get(job.id) returnsF Some(job.copy(status = status))
 
         val result = service.cancel(job.id)
@@ -71,8 +74,8 @@ class JobServiceSpec extends ScalaTestWithActorTestKit with BaseSpec with JobGen
       }
     }
 
-    "return error when job is not found" in new Setup {
-      forAll { id: String =>
+    "return error when job is not found" in forAll { id: String =>
+      new Setup {
         dao.get(id) returnsF None
         whenReady(service.cancel(id))(
           _.left.value shouldBe JobService.CancelError.NotFound(id)
@@ -80,8 +83,11 @@ class JobServiceSpec extends ScalaTestWithActorTestKit with BaseSpec with JobGen
       }
     }
 
-    "return error when job has terminated status" in new Setup {
-      forAll(arbitrary[Job], Gen.oneOf(JobStatus.Completed, JobStatus.Failed, JobStatus.Canceled)) { (job, status) =>
+    "return error when job has terminated status" in forAll(
+      arbitrary[Job],
+      Gen.oneOf(JobStatus.Completed, JobStatus.Failed, JobStatus.Canceled)
+    ) { (job, status) =>
+      new Setup {
         dao.get(job.id) returnsF Some(job.copy(status = status))
         whenReady(service.cancel(job.id))(
           _.left.value shouldBe JobService.CancelError.BadStatus(status)
@@ -93,15 +99,15 @@ class JobServiceSpec extends ScalaTestWithActorTestKit with BaseSpec with JobGen
 
   "JobService#delete" should {
 
-    "delete a job" in new Setup {
-      forAll { id: String =>
+    "delete a job" in forAll { id: String =>
+      new Setup {
         dao.delete(id) returnsF true
         whenReady(service.delete(id))(_.right.value shouldBe ())
       }
     }
 
-    "return error when job is not found" in new Setup {
-      forAll { id: String =>
+    "return error when job is not found" in forAll { id: String =>
+      new Setup {
         dao.delete(id) returnsF false
         whenReady(service.delete(id))(_.left.value shouldBe JobService.DeleteError.NotFound(id))
       }

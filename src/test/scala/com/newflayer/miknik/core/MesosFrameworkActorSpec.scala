@@ -184,12 +184,16 @@ class MesosFrameworkActorSpec
 
     "fail if could not receive http response" in new Setup {
       mesosGateway.makeAnonymousCall(*) returns Future.failed(new RuntimeException("boom"))
-      LoggingTestKit.error[RuntimeException].expect(spawnActor())
+      LoggingTestKit
+        .error[MesosFrameworkActor.FailedToReceiveMesosResponseException]
+        .expect(spawnActor())
     }
 
     "fail if http response was not 200" in new Setup {
       mesosGateway.makeAnonymousCall(*) returnsF HttpResponse(StatusCodes.BadRequest)
-      LoggingTestKit.error[RuntimeException].expect(spawnActor())
+      LoggingTestKit
+        .error[MesosFrameworkActor.BadResponseFromMesosException]
+        .expect(spawnActor())
     }
 
     "fail if first event from mesos was not subscribed" in forAll { mesosStreamId: String =>
@@ -197,7 +201,9 @@ class MesosFrameworkActorSpec
         val (response, eventListener) = buildSubscribeResponse(mesosStreamId)
         mesosGateway.makeAnonymousCall(*) returnsF response
         eventListener ! Event.newBuilder().setType(Event.Type.HEARTBEAT).build()
-        LoggingTestKit.error[RuntimeException].expect(spawnActor())
+        LoggingTestKit
+          .error[MesosFrameworkActor.UnexpectedMesosEventException]
+          .expect(spawnActor())
       }
     }
 
@@ -209,7 +215,9 @@ class MesosFrameworkActorSpec
           val event = buildSubscribedEvent(frameworkId)
           eventListener ! event
           eventListener ! event
-          LoggingTestKit.error[RuntimeException].expect(spawnActor())
+          LoggingTestKit
+            .error[MesosFrameworkActor.UnexpectedMesosEventException]
+            .expect(spawnActor())
         }
     }
 

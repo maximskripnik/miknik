@@ -16,7 +16,7 @@ trait CommonGenerators {
     } yield Instant.ofEpochMilli(millis).plusNanos(nanos)
   }
 
-  val nonEmptyAlphaNumString: Arbitrary[String] = Arbitrary {
+  val arbNonEmptyAlphaNumString: Arbitrary[String] = Arbitrary {
     arbNel[Char](Arbitrary(Gen.alphaNumChar)).arbitrary.map(_.toList.mkString)
   }
 
