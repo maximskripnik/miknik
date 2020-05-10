@@ -1,9 +1,13 @@
 package com.newflayer.miknik.core
 
 import com.newflayer.miknik.BaseSpec
+import com.newflayer.miknik.core.MesosClusterManager.AgentLaunchResult
 import com.newflayer.miknik.dao.JobDao
+import com.newflayer.miknik.domain.ClusterChanges
 import com.newflayer.miknik.domain.Job
 import com.newflayer.miknik.domain.JobGenerators
+import com.newflayer.miknik.domain.Node
+import com.newflayer.miknik.domain.NodeGenerators
 import com.newflayer.miknik.domain.Resources
 
 import scala.concurrent.Future
@@ -11,7 +15,6 @@ import scala.concurrent.duration._
 import scala.jdk.CollectionConverters._
 
 import akka.actor.testkit.typed.scaladsl.LogCapturing
-import akka.actor.testkit.typed.scaladsl.LoggingTestKit
 import akka.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
 import akka.http.scaladsl.model.HttpResponse
 import cats.data.NonEmptyList
@@ -30,6 +33,7 @@ class WorkloadSupervisorActorSpec
   with BaseSpec
   with LogCapturing
   with JobGenerators
+  with NodeGenerators
   with MesosProtoGenerators {
 
   class Setup(
@@ -38,15 +42,22 @@ class WorkloadSupervisorActorSpec
   ) {
     val mesosGateway = mock[MesosSchedulerGateway]
     val jobDao = mock[JobDao]
+    val clusterScaleDecisionMaker = mock[ClusterScaleDecisionMaker]
+    val mesosClusterManager = mock[MesosClusterManager]
     val actor = spawn(
       WorkloadSupervisorActor(
         mesosStreamId = mesosStreamId,
         frameworkId = frameworkId,
         mesosFrameworkActor = createTestProbe().ref,
         mesosGateway = mesosGateway,
-        jobDao = jobDao
+        jobDao = jobDao,
+        clusterScaleDecisionMaker,
+        mesosClusterManager,
+        100.milliseconds
       )
     )
+
+    clusterScaleDecisionMaker.decideClusterScale(*, *, *) returns None
   }
 
   implicit val arbSetup: Arbitrary[Setup] = Arbitrary {
@@ -99,7 +110,7 @@ class WorkloadSupervisorActorSpec
       }
     }
 
-    "accept an offer if it satisfies queue head job resource requirements, spawn a child actor and forward mesos updates to it" in {
+    "accept an offer if it satisfies the queue head job resource requirements, spawn a child actor and forward mesos updates to it" in {
       forAll { (setup: Setup, queue: List[Job], oldestJob: Job, offers: NonEmptyList[Offer], taskId: TaskID) =>
         val mesosResources = List(
           buildScalarResource("cpus", 2.0),
@@ -122,10 +133,8 @@ class WorkloadSupervisorActorSpec
         setup.mesosGateway.makeCall(setup.mesosStreamId, *) returnsF HttpResponse()
         setup.mesosGateway.declineOffers(setup.mesosStreamId, setup.frameworkId, *, *) returnsF HttpResponse()
 
-        LoggingTestKit.debug("Accepted offer").expect {
-          setup.actor ! WorkloadSupervisorActor.Offers(mesosOffers)
-          setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
-        }
+        setup.actor ! WorkloadSupervisorActor.Offers(mesosOffers)
+        setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
 
         val probe = createTestProbe[List[Job]]()
         setup.actor ! WorkloadSupervisorActor.GetQueue(probe.ref)
@@ -136,7 +145,7 @@ class WorkloadSupervisorActorSpec
       }
     }
 
-    "log an error and keep head job in the queue if an offer comes that satisfies that job resource requirements, but accept call fails" in {
+    "keep the head job in the queue if an offer comes that satisfies that job resource requirements, but accept call fails" in {
       forAll { (setup: Setup, queue: List[Job], oldestJob: Job, offers: NonEmptyList[Offer]) =>
         val mesosResources = List(
           buildScalarResource("cpus", 2.0),
@@ -155,15 +164,13 @@ class WorkloadSupervisorActorSpec
           )
           .build
 
-        LoggingTestKit.error("Failed to accept offer").expect {
-          setup.actor ! WorkloadSupervisorActor.ScheduleJob(headQueueJob)
-          queue.foreach(setup.actor ! WorkloadSupervisorActor.ScheduleJob(_))
-          setup.mesosGateway.makeCall(setup.mesosStreamId, *) returns Future.failed(new RuntimeException("boom"))
-          setup.mesosGateway.declineOffers(setup.mesosStreamId, setup.frameworkId, *, *) returnsF HttpResponse()
+        setup.actor ! WorkloadSupervisorActor.ScheduleJob(headQueueJob)
+        queue.foreach(setup.actor ! WorkloadSupervisorActor.ScheduleJob(_))
+        setup.mesosGateway.makeCall(setup.mesosStreamId, *) returns Future.failed(new RuntimeException("boom"))
+        setup.mesosGateway.declineOffers(setup.mesosStreamId, setup.frameworkId, *, *) returnsF HttpResponse()
 
-          setup.actor ! WorkloadSupervisorActor.Offers(mesosOffers)
-          setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
-        }
+        setup.actor ! WorkloadSupervisorActor.Offers(mesosOffers)
+        setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
 
         val probe = createTestProbe[List[Job]]()
         setup.actor ! WorkloadSupervisorActor.GetQueue(probe.ref)
@@ -220,6 +227,41 @@ class WorkloadSupervisorActorSpec
         val probe = createTestProbe[Boolean]()
         setup.actor ! WorkloadSupervisorActor.CancelJob(oldestJob.id, probe.ref)
         probe.expectMessage(true)
+      }
+    }
+
+    "handle cluser increase decision" in {
+      forAll { (setup: Setup, resources: NonEmptyList[Resources], nodes: NonEmptyList[Node]) =>
+        setup.mesosClusterManager.allocate(*) returnsF nodes.map(AgentLaunchResult.AgentLaunched(_))
+        setup.clusterScaleDecisionMaker.decideClusterScale(*, *, *) returns Some(
+          ClusterChanges(add = resources.toList, remove = List.empty)
+        ) andThen None
+
+        setup.mesosClusterManager.allocate(*) wasCalled (once within 1.second)
+      }
+    }
+
+    "handle cluser decrease decision" in {
+      forAll { (setup: Setup, nodes: NonEmptyList[Node]) =>
+        setup.mesosClusterManager.deallocate(*) returnsF ()
+        setup.clusterScaleDecisionMaker.decideClusterScale(*, *, *) returns Some(
+          ClusterChanges(add = List.empty, remove = nodes.toList)
+        ) andThen None
+
+        setup.mesosClusterManager.deallocate(*) wasCalled (once within 1.second)
+      }
+    }
+
+    "handle both cluster decrease and increase decisions" in {
+      forAll { (setup: Setup, resources: NonEmptyList[Resources], nodes: NonEmptyList[Node]) =>
+        setup.mesosClusterManager.allocate(*) returnsF nodes.map(AgentLaunchResult.AgentLaunched(_))
+        setup.mesosClusterManager.deallocate(*) returnsF ()
+        setup.clusterScaleDecisionMaker.decideClusterScale(*, *, *) returns Some(
+          ClusterChanges(add = resources.toList, remove = nodes.toList)
+        ) andThen None
+
+        setup.mesosClusterManager.allocate(*) wasCalled (once within 1.second)
+        setup.mesosClusterManager.deallocate(*) wasCalled (once within 1.second)
       }
     }
 
