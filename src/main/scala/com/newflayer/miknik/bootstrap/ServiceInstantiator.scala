@@ -1,6 +1,5 @@
 package com.newflayer.miknik.bootstrap
 
-import com.newflayer.miknik.core.ClusterResourceManager
 import com.newflayer.miknik.core.ClusterScaleDecisionMaker
 import com.newflayer.miknik.core.MesosClusterManager
 import com.newflayer.miknik.core.MesosFrameworkActor
@@ -29,9 +28,7 @@ import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.adapter._
 import akka.http.scaladsl.Http
 import akka.util.Timeout
-import cats.data.NonEmptyList
 import com.typesafe.config.Config
-import com.typesafe.config.ConfigFactory
 import org.apache.mesos.v1.Protos.FrameworkID
 
 class ServiceInstantiator(serviceActor: ActorRef[ServiceInstantiator.Message])(
@@ -129,7 +126,7 @@ object ServiceInstantiator {
         unusedNodes: List[Node]
       ): Option[ClusterChanges] =
         queue match {
-          case head :: _ =>
+          case _ :: _ =>
             if (busyNodes.size + unusedNodes.size < 1 && !did) {
               did = true
               Some(ClusterChanges(List(Resources(100, 1.0, 1000)), List.empty))

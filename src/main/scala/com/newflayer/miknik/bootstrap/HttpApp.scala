@@ -1,6 +1,5 @@
 package com.newflayer.miknik.bootstrap
 
-import scala.concurrent.Await
 import scala.concurrent.duration._
 import scala.util.Failure
 import scala.util.Success
@@ -8,8 +7,6 @@ import scala.util.Success
 import akka.actor.typed.ActorSystem
 import akka.actor.typed.Behavior
 import akka.actor.typed.ChildFailed
-import akka.actor.typed.SupervisorStrategy
-import akka.actor.typed.Terminated
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.scaladsl.adapter._
 import akka.http.scaladsl.Http

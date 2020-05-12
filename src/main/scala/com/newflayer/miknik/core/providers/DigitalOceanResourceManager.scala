@@ -1,7 +1,6 @@
 package com.newflayer.miknik.core.providers
 
 import com.newflayer.miknik.core.ClusterResourceManager
-import com.newflayer.miknik.core.providers.DigitalOceanResourceManager.Settings
 import com.newflayer.miknik.domain.Node
 import com.newflayer.miknik.domain.Resources
 import com.newflayer.miknik.utils.DurationConverters
@@ -21,13 +20,10 @@ import akka.actor.typed.scaladsl.adapter._
 import akka.pattern.after
 import cats.data.NonEmptyList
 import cats.implicits._
-import cats.instances.set
 import com.decodified.scalassh.HostConfig
 import com.decodified.scalassh.HostKeyVerifiers
 import com.decodified.scalassh.PublicKeyLogin
 import com.decodified.scalassh.SSH
-import com.decodified.scalassh.SshLogin
-import com.myjeeva.digitalocean.common.ActionStatus
 import com.myjeeva.digitalocean.common.ActionStatus.COMPLETED
 import com.myjeeva.digitalocean.common.ActionStatus.ERRORED
 import com.myjeeva.digitalocean.common.ActionStatus.IN_PROGRESS
@@ -121,7 +117,7 @@ class DigitalOceanResourceManager private (
       createdDroplet <- pollUntilCreated(registeredDroplet)
       dropletId = createdDroplet.getId()
       powerOnAction <- Future(api.powerOnDroplet(dropletId))
-      status <- pollUntilPoweredUp(powerOnAction.getId())
+      _ <- pollUntilPoweredUp(powerOnAction.getId())
       (updatedDroplet, ip) <- pollUntilIpAllocated(createdDroplet)
       node = Node(
         id = updatedDroplet.getId().toString(),
@@ -144,18 +140,17 @@ class DigitalOceanResourceManager private (
       droplet.pure[Future]
     }
 
-  private def pollUntilPoweredUp(powerOnActionId: Int): Future[ActionStatus] =
+  private def pollUntilPoweredUp(powerOnActionId: Int): Future[Unit] =
     Future(api.getActionInfo(powerOnActionId)).flatMap { action =>
       action.getStatus() match {
         case COMPLETED =>
-          action.getStatus.pure[Future]
+          ().pure[Future]
         case IN_PROGRESS =>
           after(updatePollPeriod, scheduler) {
             pollUntilPoweredUp(powerOnActionId)
           }
         case ERRORED =>
-          (new RuntimeException(s"Failed to power up droplet '${action.getResourceId()}'"))
-            .raiseError[Future, ActionStatus]
+          (new RuntimeException(s"Failed to power up droplet '${action.getResourceId()}'")).raiseError[Future, Unit]
       }
     }
 
