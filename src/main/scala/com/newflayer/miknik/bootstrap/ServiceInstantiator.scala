@@ -6,6 +6,7 @@ import com.newflayer.miknik.core.MesosClusterManager
 import com.newflayer.miknik.core.MesosFrameworkActor
 import com.newflayer.miknik.core.MesosSchedulerGateway
 import com.newflayer.miknik.core.WorkloadSupervisorActor
+import com.newflayer.miknik.core.providers.DigitalOceanResourceManager
 import com.newflayer.miknik.dao.JobDao
 import com.newflayer.miknik.domain.BusyNode
 import com.newflayer.miknik.domain.ClusterChanges
@@ -14,6 +15,8 @@ import com.newflayer.miknik.domain.Node
 import com.newflayer.miknik.domain.Resources
 import com.newflayer.miknik.services.JobService
 
+import scala.collection.immutable.Nil
+import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration._
@@ -27,6 +30,8 @@ import akka.actor.typed.scaladsl.adapter._
 import akka.http.scaladsl.Http
 import akka.util.Timeout
 import cats.data.NonEmptyList
+import com.typesafe.config.Config
+import com.typesafe.config.ConfigFactory
 import org.apache.mesos.v1.Protos.FrameworkID
 
 class ServiceInstantiator(serviceActor: ActorRef[ServiceInstantiator.Message])(
@@ -43,14 +48,16 @@ object ServiceInstantiator {
   private case class MesosFrameworkId(mesosFrameworkId: FrameworkID) extends Message
 
   private case class Context(
+    config: Config,
     mesosMasterAddress: String,
     mesosGateway: MesosSchedulerGateway,
     mesosFrameworkActor: ActorRef[MesosFrameworkActor.Message],
     ec: ExecutionContext
   )
 
-  def apply(mesosMasterAddress: String)(implicit ec: ExecutionContext): Behavior[Message] = Behaviors.setup { context =>
+  def apply(config: Config)(implicit ec: ExecutionContext): Behavior[Message] = Behaviors.setup { context =>
     implicit val actorSystem = context.system.toClassic
+    val mesosMasterAddress = config.getString("mesos.master-address")
     val http = Http()
     val mesosGateway = new MesosSchedulerGateway(mesosMasterAddress, http)
 
@@ -62,7 +69,9 @@ object ServiceInstantiator {
       )
     )
 
-    waitingForMesosInfo(List.empty, None, None)(Context(mesosMasterAddress, mesosGateway, mesosFrameworkActor, ec))
+    waitingForMesosInfo(List.empty, None, None)(
+      Context(config, mesosMasterAddress, mesosGateway, mesosFrameworkActor, ec)
+    )
   }
 
   private def waitingForMesosInfo(
@@ -110,25 +119,27 @@ object ServiceInstantiator {
     mesosFrameworkId: FrameworkID
   )(implicit ctx: Context): Behavior[Message] = Behaviors.setup { context =>
     implicit val ec = ctx.ec
+    implicit val scheduler = context.system.scheduler
 
     val decisionMaker = new ClusterScaleDecisionMaker {
+      var did = false
       def decideClusterScale(
         queue: List[Job],
         busyNodes: List[BusyNode],
         unusedNodes: List[Node]
-      ): Option[ClusterChanges] = None
+      ): Option[ClusterChanges] =
+        queue match {
+          case head :: _ =>
+            if (busyNodes.size + unusedNodes.size < 1 && !did) {
+              did = true
+              Some(ClusterChanges(List(Resources(100, 1.0, 1000)), List.empty))
+            } else { None }
+          case Nil => if (unusedNodes.nonEmpty) Some(ClusterChanges(List.empty, unusedNodes)) else None
+        }
     }
 
-    val clusterResourceManager = new ClusterResourceManager {
-      def allocate(nodeResources: NonEmptyList[Resources]): Future[NonEmptyList[Node]] =
-        Future.failed(new NotImplementedError)
-
-      def executeCommand(node: Node, cmd: List[String]): Future[Unit] =
-        Future.failed(new NotImplementedError)
-
-      def deallocate(nodeIds: NonEmptyList[String]): Future[Unit] =
-        Future.failed(new NotImplementedError)
-    }
+    val clusterResourceManager =
+      Await.result(DigitalOceanResourceManager(ctx.config.getConfig("resource-manager.digital-ocean")), Duration.Inf)
 
     val mesosClusterManager = new MesosClusterManager(
       ctx.mesosMasterAddress,
@@ -152,7 +163,7 @@ object ServiceInstantiator {
 
     val services = new Services {
       val jobService =
-        new JobService(jobDao, workloadSupervisorActor)(ec, context.system.scheduler, jobCancelTimeout = 1.minute)
+        new JobService(jobDao, workloadSupervisorActor)(ec, scheduler, jobCancelTimeout = 1.minute)
     }
 
     servicesSubscribers.foreach(_ ! services)

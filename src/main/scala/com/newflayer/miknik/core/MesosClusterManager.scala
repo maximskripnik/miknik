@@ -22,7 +22,10 @@ class MesosClusterManager(
       results <- allocatedNodes.traverse { node =>
         clusterResourceManager
           .executeCommand(node, buildMesosAgentCommand(node))
-          .redeem(AgentLaunchResult.AgentLaunchFailed(node, _), _ => AgentLaunchResult.AgentLaunched(node))
+          .redeem(
+            AgentLaunchResult.AgentLaunchFailed(node, _),
+            _ => AgentLaunchResult.AgentLaunched(node)
+          ) // FIXME deallocate node if failed
       }
     } yield results
 
@@ -31,6 +34,7 @@ class MesosClusterManager(
 
   private def buildMesosAgentCommand(node: Node): List[String] =
     List(
+      "nohup",
       "mesos-agent",
       s"--master=$mesosMasterAddress",
       s"--work_dir=${mesosWorkDir.getOrElse("/tmp/mesos")}",
@@ -39,7 +43,8 @@ class MesosClusterManager(
       "--no-systemd_enable_support",
       "--no-hostname_lookup",
       "--containerizers=docker",
-      s"--attributes='node_id:${node.id}'"
+      s"--attributes='node_id:${node.id}'",
+      "> cmd.out 2> cmd.err &"
     )
 
 }

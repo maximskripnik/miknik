@@ -147,7 +147,7 @@ private class WorkloadSupervisorActor(
           handleWorkerIsDone(taskId, state, waitingForClusterChanges(allocationIsDone, deallocationIsDone))
         case ClusterScaleTick =>
           val msg = "Cluster change tick received before previous tick was processed." +
-            "Either the tick duration is too small (try reducing it) or cluster resource manager takes too long to scale the cluster"
+            "Either the tick duration is too small (try increasing it) or cluster resource manager takes too long to scale the cluster"
           context.log.warn(msg)
           Behaviors.same
       }
