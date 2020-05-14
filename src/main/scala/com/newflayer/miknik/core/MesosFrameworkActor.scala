@@ -30,7 +30,6 @@ object MesosFrameworkActor {
   ) extends RuntimeException(cause)
     with Message
   private case class MesosResponded(response: HttpResponse) extends Message
-  private case class Subscribed(response: HttpResponse) extends Message
   private case class MesosEvent(mesosEvent: Event) extends Message
 
   private case class State(
@@ -46,13 +45,13 @@ object MesosFrameworkActor {
   def apply(
     mesosStreamIdSubscriber: ActorRef[String],
     mesosFrameworkIdSubscriber: ActorRef[FrameworkID],
-    mesosGateway: MesosSchedulerGateway
+    mesosGateway: MesosHttpGateway
   )(
     implicit ec: ExecutionContext
   ): Behavior[Message] =
     Behaviors.setup { context =>
       mesosGateway
-        .makeAnonymousCall(
+        .makeAnonymousSchedulerCall(
           Call
             .newBuilder()
             .setType(Call.Type.SUBSCRIBE)
@@ -73,7 +72,7 @@ object MesosFrameworkActor {
 
   def waitingForMesosResponse(
     state: State,
-    mesosGateway: MesosSchedulerGateway
+    mesosGateway: MesosHttpGateway
   ): Behavior[Message] = Behaviors.setup { context =>
     Behaviors.receiveMessagePartial {
       case MesosResponded(response) =>
@@ -116,7 +115,7 @@ object MesosFrameworkActor {
   def waitingForSubscribe(
     mesosStreamId: String,
     state: State,
-    mesosGateway: MesosSchedulerGateway
+    mesosGateway: MesosHttpGateway
   ): Behavior[Message] = Behaviors.receiveMessagePartial {
     case SubscribeToMesosUpdates(replyTo) =>
       waitingForSubscribe(
@@ -149,7 +148,7 @@ object MesosFrameworkActor {
     mesosStreamId: String,
     frameworkId: FrameworkID,
     state: State,
-    mesosGateway: MesosSchedulerGateway
+    mesosGateway: MesosHttpGateway
   ): Behavior[Message] =
     Behaviors.setup { context =>
       Behaviors.receiveMessagePartial {

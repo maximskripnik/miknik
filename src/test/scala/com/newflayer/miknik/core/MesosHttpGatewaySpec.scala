@@ -13,39 +13,39 @@ import org.apache.mesos.v1.Protos.Offer
 import org.apache.mesos.v1.scheduler.Protos.Call
 import org.mockito.DefaultAnswers
 
-class MesosSchedulerGatewaySpec extends ScalaTestWithActorTestKit with BaseSpec with MesosProtoGenerators {
+class MesosHttpGatewaySpec extends ScalaTestWithActorTestKit with BaseSpec with MesosProtoGenerators {
 
   trait Setup {
     val http = mock[HttpExt]
     val actorSystem = mock[ExtendedActorSystem](DefaultAnswers.ReturnsDeepStubs)
     http.system returns actorSystem
     val masterAddress = "mesos.example.com:4242"
-    val mesosGateway = new MesosSchedulerGateway(
+    val mesosGateway = new MesosHttpGateway(
       masterAddress,
       http
     )
   }
 
-  "MesosSchedulerGateway#makeCall" should {
+  "MesosHttpGateway#makeSchedulerCall" should {
     "wrap mesos Call message and send the http request with it and with mesos stream id" in forAll {
       mesosStreamId: String =>
         new Setup {
           val response = HttpResponse(StatusCodes.OK)
           http.singleRequest(*, *, *, *) returnsF response
-          whenReady(mesosGateway.makeCall(mesosStreamId, Call.newBuilder()))(_ shouldBe response)
+          whenReady(mesosGateway.makeSchedulerCall(mesosStreamId, Call.newBuilder()))(_ shouldBe response)
         }
     }
   }
 
-  "MesosSchedulerGateway#makeAnonymousCall" should {
+  "MesosHttpGateway#makeAnonymousSchedulerCall" should {
     "wrap mesos Call message and send the http request with it" in new Setup {
       val response = HttpResponse(StatusCodes.OK)
       http.singleRequest(*, *, *, *) returnsF response
-      whenReady(mesosGateway.makeAnonymousCall(Call.newBuilder()))(_ shouldBe response)
+      whenReady(mesosGateway.makeAnonymousSchedulerCall(Call.newBuilder()))(_ shouldBe response)
     }
   }
 
-  "MesosSchedulerGateway#declineOffers" should {
+  "MesosHttpGateway#declineOffers" should {
     "wrap mesos Decline message and send the http request with it" in forAll {
       (mesosStreamId: String, frameworkId: FrameworkID, offers: List[Offer]) =>
         new Setup {

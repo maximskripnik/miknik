@@ -34,7 +34,7 @@ class MesosJobActorSpec extends ScalaTestWithActorTestKit with BaseSpec with Log
     val taskId: TaskID
   ) {
     val jobDao = mock[JobDao]
-    val mesosGateway = mock[MesosSchedulerGateway]
+    val mesosGateway = mock[MesosHttpGateway]
     val actor = spawn(
       MesosJobActor(
         jobId = jobId,
@@ -67,21 +67,21 @@ class MesosJobActorSpec extends ScalaTestWithActorTestKit with BaseSpec with Log
       val mesosUpdate = buildMesosUpdate(taskState)(setup)
       setup.actor ! MesosJobActor.Update(mesosUpdate)
       setup.jobDao wasNever called
-      setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
+      setup.mesosGateway.makeSchedulerCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
     }
 
     "acknowledge TASK_RUNNING mesos update and update the job" in forAll { implicit setup: Setup =>
       val mesosUpdate = buildMesosUpdate(TaskState.TASK_RUNNING)
       setup.actor ! MesosJobActor.Update(mesosUpdate)
       setup.jobDao.update(setup.jobId, *) wasCalled (once within 1.second)
-      setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
+      setup.mesosGateway.makeSchedulerCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
     }
 
     "acknowledge TASK_FINISHED mesos update and update the job" in forAll { implicit setup: Setup =>
       val mesosUpdate = buildMesosUpdate(TaskState.TASK_FINISHED)
       setup.actor ! MesosJobActor.Update(mesosUpdate)
       setup.jobDao.update(setup.jobId, *) wasCalled (once within 1.second)
-      setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
+      setup.mesosGateway.makeSchedulerCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
     }
 
     "acknowledge TASK_UNREACHABLE, TASK_LOST or TASK_UNKNOWN mesos update, but do nothing" in forAll(
@@ -91,7 +91,7 @@ class MesosJobActorSpec extends ScalaTestWithActorTestKit with BaseSpec with Log
       val mesosUpdate = buildMesosUpdate(taskState)(setup)
       setup.actor ! MesosJobActor.Update(mesosUpdate)
       setup.jobDao wasNever called
-      setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
+      setup.mesosGateway.makeSchedulerCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
     }
 
     "acknowledge TASK_ERROR, TASK_GONE_BY_OPERATOR, TASK_DROPPED, TASK_KILLED, TASK_GONE or TASK_FAILED mesos update and update the job" in forAll(
@@ -108,7 +108,7 @@ class MesosJobActorSpec extends ScalaTestWithActorTestKit with BaseSpec with Log
       val mesosUpdate = buildMesosUpdate(taskState)(setup)
       setup.actor ! MesosJobActor.Update(mesosUpdate)
       setup.jobDao.update(setup.jobId, *) wasCalled (once within 1.second)
-      setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
+      setup.mesosGateway.makeSchedulerCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
     }
 
     "fail to process TASK_KILLING mesos update, but update the job" in forAll { implicit setup: Setup =>
@@ -117,17 +117,17 @@ class MesosJobActorSpec extends ScalaTestWithActorTestKit with BaseSpec with Log
         setup.actor ! MesosJobActor.Update(mesosUpdate)
       }
       setup.jobDao.update(setup.jobId, *) wasCalled (once within 1.second)
-      setup.mesosGateway.makeCall(*, *) wasNever called
+      setup.mesosGateway.makeSchedulerCall(*, *) wasNever called
     }
 
     "send a kill call to mesos and update the job once mesos sends TASK_KILLED update" in forAll {
       implicit setup: Setup =>
-        setup.mesosGateway.makeCall(setup.mesosStreamId, *) returnsF HttpResponse()
+        setup.mesosGateway.makeSchedulerCall(setup.mesosStreamId, *) returnsF HttpResponse()
 
         val probe = createTestProbe[Unit]()
         setup.actor ! MesosJobActor.Cancel(probe.ref)
 
-        setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
+        setup.mesosGateway.makeSchedulerCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
 
         setup.actor ! MesosJobActor.Cancel(probe.ref)
         probe.expectNoMessage()
@@ -139,12 +139,12 @@ class MesosJobActorSpec extends ScalaTestWithActorTestKit with BaseSpec with Log
     }
 
     "fail if could not send a kill call to mesos" in forAll { implicit setup: Setup =>
-      setup.mesosGateway.makeCall(setup.mesosStreamId, *) returns Future.failed(new RuntimeException("boom"))
+      setup.mesosGateway.makeSchedulerCall(setup.mesosStreamId, *) returns Future.failed(new RuntimeException("boom"))
 
       LoggingTestKit.error[MesosJobActor.MessageHandlingException].expect {
         setup.actor ! MesosJobActor.Cancel(createTestProbe[Unit]().ref)
       }
-      setup.mesosGateway.makeCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
+      setup.mesosGateway.makeSchedulerCall(setup.mesosStreamId, *) wasCalled (once within 1.second)
       setup.jobDao.update(setup.jobId, *) wasCalled (once within 1.second)
     }
 

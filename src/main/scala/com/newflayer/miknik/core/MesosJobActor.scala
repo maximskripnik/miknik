@@ -39,7 +39,7 @@ object MesosJobActor {
     frameworkId: FrameworkID,
     agentId: AgentID,
     taskId: TaskID,
-    mesosGateway: MesosSchedulerGateway
+    mesosGateway: MesosHttpGateway
   )(implicit ec: ExecutionContext): Behavior[Message] =
     watchingTask(
       jobId,
@@ -60,7 +60,7 @@ object MesosJobActor {
     frameworkId: FrameworkID,
     agentId: AgentID,
     taskId: TaskID,
-    mesosGateway: MesosSchedulerGateway
+    mesosGateway: MesosHttpGateway
   )(implicit ec: ExecutionContext): Behavior[Message] =
     Behaviors.receive[Message] {
       case (context, message) =>
@@ -99,7 +99,7 @@ object MesosJobActor {
                   throw new IllegalArgumentException(s"Unexpected status: '$unknown'")
               }
               if (mesosStatus.hasUuid) {
-                mesosGateway.makeCall(
+                mesosGateway.makeSchedulerCall(
                   mesosStreamId,
                   Call
                     .newBuilder()
@@ -118,7 +118,7 @@ object MesosJobActor {
             case cancel: Cancel =>
               if (cancelMessage.isEmpty) {
                 mesosGateway
-                  .makeCall(
+                  .makeSchedulerCall(
                     mesosStreamId,
                     Call
                       .newBuilder()

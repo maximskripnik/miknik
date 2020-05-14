@@ -38,7 +38,7 @@ class MesosFrameworkActorSpec
   trait Setup {
     val mesosStreamIdSubscriberProbe = createTestProbe[String]()
     val mesosFrameworkIdSubscriberProbe = createTestProbe[FrameworkID]()
-    val mesosGateway = mock[MesosSchedulerGateway]
+    val mesosGateway = mock[MesosHttpGateway]
 
     def spawnActor() = testKit.spawn(
       MesosFrameworkActor(
@@ -73,7 +73,7 @@ class MesosFrameworkActorSpec
     ) { (mesosStreamId: String, frameworkId: FrameworkID, events: List[Event]) =>
       new Setup {
         val (response, eventListener) = buildSubscribeResponse(mesosStreamId)
-        mesosGateway.makeAnonymousCall(*) returnsF response
+        mesosGateway.makeAnonymousSchedulerCall(*) returnsF response
         val actor = spawnActor()
 
         mesosStreamIdSubscriberProbe.expectMessage(mesosStreamId)
@@ -105,7 +105,7 @@ class MesosFrameworkActorSpec
     ) { (mesosStreamId: String, frameworkId: FrameworkID, events: List[Event]) =>
       new Setup {
         val (response, eventListener) = buildSubscribeResponse(mesosStreamId)
-        mesosGateway.makeAnonymousCall(*) returnsF response
+        mesosGateway.makeAnonymousSchedulerCall(*) returnsF response
         val actor = spawnActor()
 
         mesosStreamIdSubscriberProbe.expectMessage(mesosStreamId)
@@ -138,7 +138,7 @@ class MesosFrameworkActorSpec
       new Setup {
         val (response, eventListener) = buildSubscribeResponse(mesosStreamId)
         val responseP = Promise[HttpResponse]()
-        mesosGateway.makeAnonymousCall(*) returns responseP.future
+        mesosGateway.makeAnonymousSchedulerCall(*) returns responseP.future
         val actor = spawnActor()
 
         val offersSubscriber = createTestProbe[Offers]()
@@ -168,7 +168,7 @@ class MesosFrameworkActorSpec
       (mesosStreamId: String, frameworkId: FrameworkID, offers: Offers) =>
         new Setup {
           val (response, eventListener) = buildSubscribeResponse(mesosStreamId)
-          mesosGateway.makeAnonymousCall(*) returnsF response
+          mesosGateway.makeAnonymousSchedulerCall(*) returnsF response
           spawnActor()
 
           mesosStreamIdSubscriberProbe.expectMessage(mesosStreamId)
@@ -183,14 +183,14 @@ class MesosFrameworkActorSpec
     }
 
     "fail if could not receive http response" in new Setup {
-      mesosGateway.makeAnonymousCall(*) returns Future.failed(new RuntimeException("boom"))
+      mesosGateway.makeAnonymousSchedulerCall(*) returns Future.failed(new RuntimeException("boom"))
       LoggingTestKit
         .error[MesosFrameworkActor.FailedToReceiveMesosResponseException]
         .expect(spawnActor())
     }
 
     "fail if http response was not 200" in new Setup {
-      mesosGateway.makeAnonymousCall(*) returnsF HttpResponse(StatusCodes.BadRequest)
+      mesosGateway.makeAnonymousSchedulerCall(*) returnsF HttpResponse(StatusCodes.BadRequest)
       LoggingTestKit
         .error[MesosFrameworkActor.BadResponseFromMesosException]
         .expect(spawnActor())
@@ -199,7 +199,7 @@ class MesosFrameworkActorSpec
     "fail if first event from mesos was not subscribed" in forAll { mesosStreamId: String =>
       new Setup {
         val (response, eventListener) = buildSubscribeResponse(mesosStreamId)
-        mesosGateway.makeAnonymousCall(*) returnsF response
+        mesosGateway.makeAnonymousSchedulerCall(*) returnsF response
         eventListener ! Event.newBuilder().setType(Event.Type.HEARTBEAT).build()
         LoggingTestKit
           .error[MesosFrameworkActor.UnexpectedMesosEventException]
@@ -211,7 +211,7 @@ class MesosFrameworkActorSpec
       (mesosStreamId: String, frameworkId: FrameworkID) =>
         new Setup {
           val (response, eventListener) = buildSubscribeResponse(mesosStreamId)
-          mesosGateway.makeAnonymousCall(*) returnsF response
+          mesosGateway.makeAnonymousSchedulerCall(*) returnsF response
           val event = buildSubscribedEvent(frameworkId)
           eventListener ! event
           eventListener ! event
@@ -238,7 +238,7 @@ class MesosFrameworkActorSpec
       headers = List(
         RawHeader("Mesos-Stream-Id", mesosStreamId)
       ),
-      entity = HttpEntity(ContentType(MesosSchedulerGateway.protobufType), entitySource)
+      entity = HttpEntity(ContentType(MesosHttpGateway.protobufType), entitySource)
     )
 
     (response, eventListener.toTyped[Event])

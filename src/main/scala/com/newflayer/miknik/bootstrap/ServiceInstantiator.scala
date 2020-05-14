@@ -2,8 +2,9 @@ package com.newflayer.miknik.bootstrap
 
 import com.newflayer.miknik.core.ClusterScaleDecisionMaker
 import com.newflayer.miknik.core.MesosClusterManager
+import com.newflayer.miknik.core.MesosClusterManagerActor
 import com.newflayer.miknik.core.MesosFrameworkActor
-import com.newflayer.miknik.core.MesosSchedulerGateway
+import com.newflayer.miknik.core.MesosHttpGateway
 import com.newflayer.miknik.core.WorkloadSupervisorActor
 import com.newflayer.miknik.core.providers.DigitalOceanResourceManager
 import com.newflayer.miknik.dao.JobDao
@@ -47,7 +48,7 @@ object ServiceInstantiator {
   private case class Context(
     config: Config,
     mesosMasterAddress: String,
-    mesosGateway: MesosSchedulerGateway,
+    mesosGateway: MesosHttpGateway,
     mesosFrameworkActor: ActorRef[MesosFrameworkActor.Message],
     ec: ExecutionContext
   )
@@ -56,7 +57,7 @@ object ServiceInstantiator {
     implicit val actorSystem = context.system.toClassic
     val mesosMasterAddress = config.getString("mesos.master-address")
     val http = Http()
-    val mesosGateway = new MesosSchedulerGateway(mesosMasterAddress, http)
+    val mesosGateway = new MesosHttpGateway(mesosMasterAddress, http)
 
     val mesosFrameworkActor = context.spawnAnonymous(
       MesosFrameworkActor(
@@ -116,6 +117,7 @@ object ServiceInstantiator {
     mesosFrameworkId: FrameworkID
   )(implicit ctx: Context): Behavior[Message] = Behaviors.setup { context =>
     implicit val ec = ctx.ec
+    implicit val actorSystem = context.system.toClassic
     implicit val scheduler = context.system.scheduler
 
     val decisionMaker = new ClusterScaleDecisionMaker {
@@ -138,10 +140,20 @@ object ServiceInstantiator {
     val clusterResourceManager =
       Await.result(DigitalOceanResourceManager(ctx.config.getConfig("resource-manager.digital-ocean")), Duration.Inf)
 
+    val mesosClusterManagerActor = context.spawnAnonymous(
+      MesosClusterManagerActor(
+        ctx.mesosMasterAddress,
+        ctx.mesosGateway,
+        None,
+        clusterResourceManager
+      )
+    )
+
     val mesosClusterManager = new MesosClusterManager(
-      ctx.mesosMasterAddress,
-      None,
-      clusterResourceManager
+      ctx.mesosGateway,
+      clusterResourceManager,
+      30.seconds,
+      mesosClusterManagerActor
     )
 
     val jobDao = new JobDao()
