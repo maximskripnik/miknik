@@ -2,6 +2,8 @@ package com.newflayer.miknik.domain
 
 import com.newflayer.miknik.utils.CommonGenerators
 
+import java.time.Instant
+
 import org.scalacheck.Arbitrary
 import org.scalacheck.Arbitrary._
 import org.scalacheck.Gen
@@ -22,7 +24,9 @@ trait NodeGenerators extends CommonGenerators with JobGenerators with ResourcesG
       id <- arbNonEmptyAlphaNumString.arbitrary
       ip <- arbIp.arbitrary
       resources <- arbitrary[Resources]
-    } yield Node(id, ip, resources)
+      created <- arbitrary[Instant]
+      lastUsed <- arbitrary[Instant]
+    } yield Node(id, ip, resources, created, lastUsed)
   }
 
   implicit val arfBusyNode: Arbitrary[BusyNode] = Arbitrary {

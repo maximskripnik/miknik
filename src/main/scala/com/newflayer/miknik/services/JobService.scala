@@ -36,25 +36,26 @@ class JobService(
     dockerImage: String,
     cmd: Option[List[String]],
     env: Option[Map[String, String]]
-  ): Future[Job] = {
-    val now = Instant.now()
-    val job = Job(
-      id = id,
-      resources = resources,
-      dockerImage = dockerImage,
-      cmd = cmd.getOrElse(List.empty),
-      env = env.getOrElse(Map.empty),
-      status = JobStatus.Pending,
-      error = None,
-      created = now,
-      updated = now,
-      completed = None
-    )
-    dao.create(job).map { job =>
-      workloadSupervisorActor ! WorkloadSupervisorActor.ScheduleJob(job)
-      job
-    }
-  }
+  ): Future[Job] =
+    for {
+      existingJob <- dao.get(id)
+      _ = if (existingJob.isDefined) throw new RuntimeException(s"Job with id '$id' already exists")
+      now = Instant.now()
+      job = Job(
+        id = id,
+        resources = resources,
+        dockerImage = dockerImage,
+        cmd = cmd.getOrElse(List.empty),
+        env = env.getOrElse(Map.empty),
+        status = JobStatus.Pending,
+        error = None,
+        created = now,
+        updated = now,
+        completed = None
+      )
+      createdJob <- dao.create(job)
+      _ = workloadSupervisorActor ! WorkloadSupervisorActor.ScheduleJob(createdJob)
+    } yield createdJob
 
   def list(): Future[ListResult[Job]] =
     for {

@@ -36,6 +36,7 @@ class JobServiceSpec extends ScalaTestWithActorTestKit with BaseSpec with JobGen
           env: Option[Map[String, String]],
           job: Job
         ) =>
+          dao.get(id) returnsF None
           dao.create(*) returnsF job
           val result = service.create(id, resources, dockerImage, cmd, env)
           workloadSupervisorProbe.expectMessageType[WorkloadSupervisorActor.ScheduleJob]

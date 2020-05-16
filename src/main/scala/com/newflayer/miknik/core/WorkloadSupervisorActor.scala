@@ -18,6 +18,8 @@ import scala.jdk.CollectionConverters._
 import scala.util.Failure
 import scala.util.Success
 
+import java.time.Instant
+
 import akka.actor.typed.ActorRef
 import akka.actor.typed.Behavior
 import akka.actor.typed.scaladsl.ActorContext
@@ -67,8 +69,8 @@ private class WorkloadSupervisorActor(
           handleUpdate(mesosUpdate, state)
         case OfferAccepted(offerId, job, taskId, agentId) =>
           handleOfferAccepted(offerId, job, taskId, agentId, state, readyForOffers(_))
-        case OfferAcceptFailed(offerId, jobId, error) =>
-          handleOfferAcceptFailed(offerId, jobId, error)
+        case OfferAcceptFailed(offerId, agentId, jobId, error) =>
+          handleOfferAcceptFailed(offerId, agentId, jobId, error, state, readyForOffers(_))
         case WorkerIsDone(taskId) =>
           handleWorkerIsDone(taskId, state, readyForOffers(_))
         case ClusterScaleTick =>
@@ -148,8 +150,15 @@ private class WorkloadSupervisorActor(
             state,
             waitingForClusterChanges(allocationIsDone, deallocationIsDone)
           )
-        case OfferAcceptFailed(offerId, jobId, error) =>
-          handleOfferAcceptFailed(offerId, jobId, error)
+        case OfferAcceptFailed(offerId, agentId, jobId, error) =>
+          handleOfferAcceptFailed(
+            offerId,
+            agentId,
+            jobId,
+            error,
+            state,
+            waitingForClusterChanges(allocationIsDone, deallocationIsDone)
+          )
         case WorkerIsDone(taskId) =>
           handleWorkerIsDone(taskId, state, waitingForClusterChanges(allocationIsDone, deallocationIsDone))
         case ClusterScaleTick =>
@@ -174,8 +183,10 @@ private class WorkloadSupervisorActor(
               case Success(_) =>
                 OfferAccepted(offer.getId, job, taskId, offer.getAgentId)
               case Failure(e) =>
-                OfferAcceptFailed(offer.getId, job.id, e)
+                OfferAcceptFailed(offer.getId, offer.getAgentId, job.id, e)
             }
+            val (newBusyNodes, newUnusedNodes) =
+              addJobToNode(state.busyNodes, state.unusedNodes, offer.getAgentId(), job)
             val unnecessaryOffers = offers.filterNot(_.getId == offer.getId)
             if (unnecessaryOffers.nonEmpty) {
               mesosGateway.declineOffers(
@@ -185,7 +196,7 @@ private class WorkloadSupervisorActor(
                 context.log
               )
             }
-            Behaviors.same
+            readyForOffers(state.copy(busyNodes = newBusyNodes, unusedNodes = newUnusedNodes))
           case None =>
             mesosGateway.declineOffers(mesosStreamId, frameworkId, offers, context.log)
             Behaviors.same
@@ -270,64 +281,37 @@ private class WorkloadSupervisorActor(
       )
     )
     context.watchWith(worker, WorkerIsDone(taskId))
-    val newQueue = state.queue.filterNot(_.id == job.id)
-    val (newBusyNodes, newUnusedNodes) =
-      state.busyNodes.get(agentId) match {
-        case Some(busyNode) =>
-          (
-            state.busyNodes.updated(agentId, busyNode.copy(runningJobs = job :: busyNode.runningJobs)),
-            state.unusedNodes
-          )
-        case None =>
-          state.unusedNodes.get(agentId) match {
-            case Some(node) =>
-              (
-                state.busyNodes.updated(agentId, BusyNode(node, NonEmptyList.of(job))),
-                state.unusedNodes.removed(agentId)
-              )
-            case None =>
-              (state.busyNodes, state.unusedNodes)
-          }
-      }
 
+    val newQueue = state.queue.filterNot(_.id == job.id)
     transition(
       state.copy(
         queue = newQueue,
         workers = state.workers.updated(taskId, Worker(worker, job.id, agentId)),
-        jobIdIndex = state.jobIdIndex.updated(job.id, taskId),
-        busyNodes = newBusyNodes,
-        unusedNodes = newUnusedNodes
+        jobIdIndex = state.jobIdIndex.updated(job.id, taskId)
       )
     )
   }
 
-  private def handleOfferAcceptFailed(offerId: OfferID, jobId: String, error: Throwable): Behavior[Message] = {
+  private def handleOfferAcceptFailed(
+    offerId: OfferID,
+    agentId: AgentID,
+    jobId: String,
+    error: Throwable,
+    state: State,
+    transition: Transition
+  ): Behavior[Message] = {
     context.log.error(
       s"Failed to accept offer '$offerId' for job '$jobId'",
       error
     )
-    Behaviors.same
+    val (newBusyNodes, newUnusedNodes) = removeJobFromNode(state.busyNodes, state.unusedNodes, agentId, jobId)
+    transition(state.copy(busyNodes = newBusyNodes, unusedNodes = newUnusedNodes))
   }
 
   private def handleWorkerIsDone(taskId: TaskID, state: State, transition: Transition): Behavior[Message] =
     state.workers.get(taskId) match {
       case Some(Worker(_, jobId, agentId)) =>
-        val (newBusyNodes, newUnusedNodes) = state.busyNodes.get(agentId) match {
-          case Some(thisBusyNode) =>
-            val newNodeRunningJobs = thisBusyNode.runningJobs.filterNot(_.id == jobId)
-            context.log.debug(s"New node running jobs: $newNodeRunningJobs")
-            newNodeRunningJobs match {
-              case job :: moreJobs =>
-                (
-                  state.busyNodes.updated(agentId, thisBusyNode.copy(runningJobs = NonEmptyList(job, moreJobs))),
-                  state.unusedNodes
-                )
-              case Nil =>
-                (state.busyNodes.removed(agentId), state.unusedNodes.updated(agentId, thisBusyNode.node))
-            }
-          case None =>
-            (state.busyNodes, state.unusedNodes)
-        }
+        val (newBusyNodes, newUnusedNodes) = removeJobFromNode(state.busyNodes, state.unusedNodes, agentId, jobId)
         transition(
           state.copy(
             workers = state.workers.removed(taskId),
@@ -406,6 +390,67 @@ private class WorkloadSupervisorActor(
         false
     }
   }
+
+  private def addJobToNode(
+    busyNodes: Map[AgentID, BusyNode],
+    unusedNodes: Map[AgentID, Node],
+    agentId: AgentID,
+    job: Job
+  ): (Map[AgentID, BusyNode], Map[AgentID, Node]) =
+    busyNodes.get(agentId) match {
+      case Some(busyNode) =>
+        (
+          busyNodes.updated(
+            agentId,
+            busyNode.copy(
+              runningJobs = job :: busyNode.runningJobs,
+              node = busyNode.node.copy(lastUsedAt = Instant.now())
+            )
+          ),
+          unusedNodes
+        )
+      case None =>
+        unusedNodes.get(agentId) match {
+          case Some(node) =>
+            (
+              busyNodes.updated(agentId, BusyNode(node.copy(lastUsedAt = Instant.now()), NonEmptyList.of(job))),
+              unusedNodes.removed(agentId)
+            )
+          case None =>
+            (busyNodes, unusedNodes)
+        }
+    }
+
+  private def removeJobFromNode(
+    busyNodes: Map[AgentID, BusyNode],
+    unusedNodes: Map[AgentID, Node],
+    agentId: AgentID,
+    jobId: JobId
+  ) =
+    busyNodes.get(agentId) match {
+      case Some(thisBusyNode) =>
+        val newNodeRunningJobs = thisBusyNode.runningJobs.filterNot(_.id == jobId)
+        newNodeRunningJobs match {
+          case job :: moreJobs =>
+            (
+              busyNodes.updated(
+                agentId,
+                thisBusyNode.copy(
+                  runningJobs = NonEmptyList(job, moreJobs),
+                  node = thisBusyNode.node.copy(lastUsedAt = Instant.now())
+                )
+              ),
+              unusedNodes
+            )
+          case Nil =>
+            (
+              busyNodes.removed(agentId),
+              unusedNodes.updated(agentId, thisBusyNode.node.copy(lastUsedAt = Instant.now()))
+            )
+        }
+      case None =>
+        (busyNodes, unusedNodes)
+    }
 
   private def acceptOffer(
     offer: Offer,
@@ -500,7 +545,12 @@ object WorkloadSupervisorActor {
     taskId: TaskID,
     agentId: AgentID
   ) extends Message
-  private case class OfferAcceptFailed(offerId: OfferID, jobId: String, error: Throwable) extends Message
+  private case class OfferAcceptFailed(
+    offerId: OfferID,
+    agentId: AgentID,
+    jobId: String,
+    error: Throwable
+  ) extends Message
   private case class WorkerIsDone(taskId: TaskID) extends Message
   private case object ClusterScaleTick extends Message
   private case class AllocationPerformed(allocationResults: NonEmptyList[AgentLaunchResult]) extends Message
