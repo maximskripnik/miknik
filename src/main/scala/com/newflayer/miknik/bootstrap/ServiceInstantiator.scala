@@ -1,21 +1,16 @@
 package com.newflayer.miknik.bootstrap
 
-import com.newflayer.miknik.core.ClusterScaleDecisionMaker
 import com.newflayer.miknik.core.MesosClusterManager
 import com.newflayer.miknik.core.MesosClusterManagerActor
 import com.newflayer.miknik.core.MesosFrameworkActor
 import com.newflayer.miknik.core.MesosHttpGateway
 import com.newflayer.miknik.core.WorkloadSupervisorActor
 import com.newflayer.miknik.core.providers.DigitalOceanResourceManager
+import com.newflayer.miknik.core.strategies.MaxNJobsScaleDecisionMaker
 import com.newflayer.miknik.dao.JobDao
-import com.newflayer.miknik.domain.BusyNode
-import com.newflayer.miknik.domain.ClusterChanges
-import com.newflayer.miknik.domain.Job
-import com.newflayer.miknik.domain.Node
-import com.newflayer.miknik.domain.Resources
 import com.newflayer.miknik.services.JobService
+import com.newflayer.miknik.utils.DurationConverters
 
-import scala.collection.immutable.Nil
 import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -120,22 +115,12 @@ object ServiceInstantiator {
     implicit val actorSystem = context.system.toClassic
     implicit val scheduler = context.system.scheduler
 
-    val decisionMaker = new ClusterScaleDecisionMaker {
-      var did = false
-      def decideClusterScale(
-        queue: List[Job],
-        busyNodes: List[BusyNode],
-        unusedNodes: List[Node]
-      ): Option[ClusterChanges] =
-        queue match {
-          case _ :: _ =>
-            if (busyNodes.size + unusedNodes.size < 1 && !did) {
-              did = true
-              Some(ClusterChanges(List(Resources(100, 1.0, 1000)), List.empty))
-            } else { None }
-          case Nil => if (unusedNodes.nonEmpty) Some(ClusterChanges(List.empty, unusedNodes)) else None
-        }
-    }
+    val decisionMakerConf = ctx.config.getConfig("scale-strategy.max-n-jobs")
+    val decisionMaker = new MaxNJobsScaleDecisionMaker(
+      decisionMakerConf.getInt("max-jobs"),
+      decisionMakerConf.getInt("max-nodes"),
+      DurationConverters.toScalaDuration(decisionMakerConf.getDuration("max-node-unused-time"))
+    )
 
     val clusterResourceManager =
       Await.result(DigitalOceanResourceManager(ctx.config.getConfig("resource-manager.digital-ocean")), Duration.Inf)

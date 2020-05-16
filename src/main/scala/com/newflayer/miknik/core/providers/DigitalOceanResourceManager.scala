@@ -13,6 +13,7 @@ import scala.util.Failure
 import scala.util.Success
 import scala.util.Try
 
+import java.time.Instant
 import java.util.UUID
 
 import akka.actor.typed.Scheduler
@@ -119,6 +120,7 @@ class DigitalOceanResourceManager private (
       powerOnAction <- Future(api.powerOnDroplet(dropletId))
       _ <- pollUntilPoweredUp(powerOnAction.getId())
       (updatedDroplet, ip) <- pollUntilIpAllocated(createdDroplet)
+      now = Instant.now()
       node = Node(
         id = updatedDroplet.getId().toString(),
         ip = ip,
@@ -126,7 +128,9 @@ class DigitalOceanResourceManager private (
           mem = updatedDroplet.getMemorySizeInMb().toLong,
           cpus = updatedDroplet.getVirutalCpuCount().toDouble,
           disk = updatedDroplet.getDiskSize().toLong * 1024
-        )
+        ),
+        createdAt = now,
+        lastUsedAt = now
       )
       _ <- pollUntilSSHIsReady(node) // it's not always available even after the droplet is up
     } yield node
