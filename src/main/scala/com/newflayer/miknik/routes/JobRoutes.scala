@@ -39,7 +39,7 @@ class JobRoutes(service: JobService) extends Routes {
             }
             complete(code)
           case Right(_) =>
-            complete()
+            complete(())
         }
       } ~
       (path("cancel") & post) {

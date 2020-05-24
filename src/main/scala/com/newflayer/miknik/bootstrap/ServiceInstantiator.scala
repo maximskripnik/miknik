@@ -4,10 +4,11 @@ import com.newflayer.miknik.core.MesosClusterManager
 import com.newflayer.miknik.core.MesosClusterManagerActor
 import com.newflayer.miknik.core.MesosFrameworkActor
 import com.newflayer.miknik.core.MesosHttpGateway
-import com.newflayer.miknik.core.WorkloadSupervisorActor
+import com.newflayer.miknik.core.WorkloadSupervisorInstantiator
 import com.newflayer.miknik.core.providers.DigitalOceanResourceManager
 import com.newflayer.miknik.core.strategies.MaxNJobsScaleDecisionMaker
 import com.newflayer.miknik.dao.JobDao
+import com.newflayer.miknik.dao.NodeDao
 import com.newflayer.miknik.services.JobService
 import com.newflayer.miknik.utils.DurationConverters
 
@@ -15,6 +16,9 @@ import scala.concurrent.Await
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration._
+
+import java.sql.Connection
+import java.sql.DriverManager
 
 import akka.actor.typed.ActorRef
 import akka.actor.typed.Behavior
@@ -26,6 +30,7 @@ import akka.http.scaladsl.Http
 import akka.util.Timeout
 import com.typesafe.config.Config
 import org.apache.mesos.v1.Protos.FrameworkID
+import org.sqlite.SQLiteConfig
 
 class ServiceInstantiator(serviceActor: ActorRef[ServiceInstantiator.Message])(
   implicit scheduler: Scheduler
@@ -134,26 +139,42 @@ object ServiceInstantiator {
       )
     )
 
+    val dataDirectory = ctx.config.getString("data-directory")
+    val sqliteConfig = new SQLiteConfig()
+    sqliteConfig.enforceForeignKeys(true)
+    val connection = DriverManager.getConnection(
+      s"jdbc:sqlite:$dataDirectory/digital_ocean.db",
+      sqliteConfig.toProperties()
+    )
+    connection.setAutoCommit(false)
+
+    initializeSchema(connection)
+
+    val jobDao = new JobDao(connection)
+    val nodeDao = new NodeDao(connection)
+
     val mesosClusterManager = new MesosClusterManager(
       ctx.mesosGateway,
+      nodeDao,
       clusterResourceManager,
       30.seconds,
       mesosClusterManagerActor
     )
 
-    val jobDao = new JobDao()
-    val workloadSupervisorActor = context.spawnAnonymous(
-      WorkloadSupervisorActor(
-        mesosStreamId,
-        mesosFrameworkId,
-        ctx.mesosFrameworkActor,
-        ctx.mesosGateway,
-        jobDao,
-        decisionMaker,
-        mesosClusterManager,
-        30.seconds
-      )
+    val workloadSupervisorInstantiator = new WorkloadSupervisorInstantiator(
+      nodeDao,
+      jobDao,
+      ctx.mesosGateway,
+      decisionMaker,
+      mesosClusterManager,
+      30.seconds
     )
+
+    val workloadSupervisorBehaviour = Await.result(
+      workloadSupervisorInstantiator.createBehaviour(mesosStreamId, mesosFrameworkId, ctx.mesosFrameworkActor),
+      Duration.Inf
+    )
+    val workloadSupervisorActor = context.spawnAnonymous(workloadSupervisorBehaviour)
 
     val services = new Services {
       val jobService =
@@ -166,6 +187,46 @@ object ServiceInstantiator {
         replyTo ! services
         Behaviors.same
     }
+  }
+
+  private def initializeSchema(connection: Connection) = {
+    val nodeTableStmt =
+      connection.prepareStatement("""
+        CREATE TABLE IF NOT EXISTS node (
+          id TEXT NOT NULL,
+          agent_id TEXT NOT NULL,
+          ip TEXT NOT NULL,
+          cpus NUMERIC NOT NULL,
+          mem INTEGER NOT NULL,
+          disk INTEGER NOT NULL,
+          created_at TEXT NOT NULL,
+          last_used_at TEXT NOT NULL,
+          CONSTRAINT node_PK PRIMARY KEY (id)
+        )""")
+
+    val jobTableStmt =
+      connection.prepareStatement("""
+        CREATE TABLE IF NOT EXISTS job (
+          id TEXT NOT NULL,
+          node_id TEXT,
+          task_id TEXT,
+          docker_image TEXT NOT NULL,
+          cpus NUMERIC NOT NULL,
+          mem INTEGER NOT NULL,
+          disk INTEGER NOT NULL,
+          cmd TEXT NOT NULL,
+          env TEXT NOT NULL,
+          status TEXT NOT NULL,
+          error TEXT,
+          created TEXT NOT NULL,
+          updated TEXT NOT NULL,
+          completed TEXT,
+          CONSTRAINT job_PK PRIMARY KEY (id),
+          CONSTRAINT job_node_FK FOREIGN KEY(node_id) REFERENCES node(id) ON DELETE SET NULL
+        )""")
+
+    nodeTableStmt.executeUpdate()
+    jobTableStmt.executeUpdate()
   }
 
 }

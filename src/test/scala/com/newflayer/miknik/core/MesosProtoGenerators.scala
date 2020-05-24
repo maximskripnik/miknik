@@ -57,7 +57,7 @@ trait MesosProtoGenerators {
   }
 
   implicit val arbTaskState: Arbitrary[TaskState] = Arbitrary {
-    oneOf(TaskState.values())
+    oneOf(TaskState.values.toIndexedSeq)
   }
 
   implicit val arbUpdate: Arbitrary[Update] = Arbitrary {
