@@ -75,11 +75,11 @@ object MesosJobActor {
                   Behaviors.same
                 case TASK_RUNNING =>
                   context.log.debug("Job '{}' has started running", jobId)
-                  jobDao.update(jobId, _.copy(status = JobStatus.Running))
+                  jobDao.update(jobId, status = Some(JobStatus.Running))
                   Behaviors.same
                 case TASK_FINISHED =>
                   context.log.debug("Job '{}' has finished", jobId)
-                  jobDao.update(jobId, _.copy(status = JobStatus.Completed, completed = Some(Instant.now())))
+                  jobDao.update(jobId, status = Some(JobStatus.Completed), completed = Some(Instant.now()))
                   Behaviors.stopped
                 case status @ (
                       TASK_UNREACHABLE | TASK_LOST | TASK_UNKNOWN
@@ -88,12 +88,12 @@ object MesosJobActor {
                   Behaviors.same
                 case TASK_KILLED if cancelMessage.isDefined =>
                   context.log.debug("Job '{}' has been cancelled", jobId)
-                  jobDao.update(jobId, _.copy(status = JobStatus.Canceled))
+                  jobDao.update(jobId, status = Some(JobStatus.Canceled))
                   cancelMessage.get.replyTo ! ()
                   Behaviors.stopped
                 case TASK_ERROR | TASK_GONE_BY_OPERATOR | TASK_DROPPED | TASK_GONE | TASK_FAILED | TASK_KILLED =>
                   context.log.debug("Job '{}' has failed", jobId)
-                  jobDao.update(jobId, _.copy(status = JobStatus.Failed, error = Option(mesosStatus.getMessage)))
+                  jobDao.update(jobId, status = Some(JobStatus.Failed), error = Option(mesosStatus.getMessage))
                   Behaviors.stopped
                 case unknown @ TASK_KILLING =>
                   throw new IllegalArgumentException(s"Unexpected status: '$unknown'")
@@ -157,10 +157,8 @@ object MesosJobActor {
           case NonFatal(ex) =>
             jobDao.update(
               jobId,
-              _.copy(
-                error = Some("Failure on Miknik's side. Report a bug if you see this"),
-                status = JobStatus.Failed
-              )
+              error = Some("Failure on Miknik's side. Report a bug if you see this"),
+              status = Some(JobStatus.Failed)
             )
             throw new MessageHandlingException(message, ex)
         }

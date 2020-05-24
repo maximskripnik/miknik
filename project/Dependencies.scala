@@ -15,6 +15,7 @@ object Dependencies {
     val alpakkaSimpleCodecs = "com.lightbend.akka" %% "akka-stream-alpakka-simple-codecs" % "1.1.2"
     val digitaloceanApi = "com.myjeeva.digitalocean" % "digitalocean-api-client" % "2.17"
     val scalaSsh = "com.decodified" %% "scala-ssh" % "0.10.0"
+    val sqliteJdbc = "org.xerial" % "sqlite-jdbc" % "3.31.1"
 
     val all = List(
       akka,
@@ -29,7 +30,8 @@ object Dependencies {
       mesos,
       alpakkaSimpleCodecs,
       digitaloceanApi,
-      scalaSsh
+      scalaSsh,
+      sqliteJdbc
     )
   }
 

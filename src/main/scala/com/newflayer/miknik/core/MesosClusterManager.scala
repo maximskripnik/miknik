@@ -1,6 +1,7 @@
 package com.newflayer.miknik.core
 
 import com.newflayer.miknik.core.MesosClusterManager.DeallocationParams
+import com.newflayer.miknik.dao.NodeDao
 import com.newflayer.miknik.domain.Resources
 
 import scala.concurrent.ExecutionContext
@@ -19,6 +20,7 @@ import org.apache.mesos.v1.master.Protos.Call.MarkAgentGone
 
 class MesosClusterManager(
   mesosGateway: MesosHttpGateway,
+  nodeDao: NodeDao,
   clusterResourceManager: ClusterResourceManager,
   agentLaunchTimeout: Timeout,
   actor: ActorRef[MesosClusterManagerActor.Message]
@@ -29,7 +31,17 @@ class MesosClusterManager(
   def allocate(nodeResources: NonEmptyList[Resources]): Future[NonEmptyList[AgentLaunchResult]] =
     for {
       allocatedNodes <- clusterResourceManager.allocate(nodeResources)
-      results <- allocatedNodes.traverse { node => actor.ask(MesosClusterManagerActor.LaunchAgent(node, _)) }
+      results <- allocatedNodes.traverse { node =>
+        for {
+          agentLaunchResult <- actor.ask(MesosClusterManagerActor.LaunchAgent(node, _))
+          _ <- agentLaunchResult match {
+            case MesosClusterManagerActor.AgentLaunchResult.AgentLaunched(node, agentId) =>
+              nodeDao.create(node, agentId)
+            case _: MesosClusterManagerActor.AgentLaunchResult.AgentLaunchFailed =>
+              ().pure[Future]
+          }
+        } yield agentLaunchResult
+      }
     } yield results
 
   def deallocate(deallocationParams: NonEmptyList[DeallocationParams]): Future[Unit] =
@@ -43,6 +55,7 @@ class MesosClusterManager(
         )
       }
       _ <- clusterResourceManager.deallocate(deallocationParams.map(_.nodeId))
+      _ <- nodeDao.deleteAll(deallocationParams.map(_.nodeId))
     } yield ()
 
 }

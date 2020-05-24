@@ -186,7 +186,7 @@ private class WorkloadSupervisorActor(
                 OfferAcceptFailed(offer.getId, offer.getAgentId, job.id, e)
             }
             val (newBusyNodes, newUnusedNodes) =
-              addJobToNode(state.busyNodes, state.unusedNodes, offer.getAgentId(), job)
+              addJobToNode(state.busyNodes, state.unusedNodes, offer.getAgentId(), taskId, job)
             val unnecessaryOffers = offers.filterNot(_.getId == offer.getId)
             if (unnecessaryOffers.nonEmpty) {
               mesosGateway.declineOffers(
@@ -240,7 +240,7 @@ private class WorkloadSupervisorActor(
         right.dequeueOption match {
           case Some((_, rightJobs)) =>
             context.log.debug(s"Job '$jobId' has been cancelled while in queue")
-            jobDao.update(jobId, _.copy(status = JobStatus.Canceled))
+            jobDao.update(jobId, status = Some(JobStatus.Canceled))
             replyTo ! true
             transition(state.copy(queue = leftJobs.appendedAll(rightJobs)))
           case None =>
@@ -395,10 +395,12 @@ private class WorkloadSupervisorActor(
     busyNodes: Map[AgentID, BusyNode],
     unusedNodes: Map[AgentID, Node],
     agentId: AgentID,
+    taskId: TaskID,
     job: Job
   ): (Map[AgentID, BusyNode], Map[AgentID, Node]) =
     busyNodes.get(agentId) match {
       case Some(busyNode) =>
+        jobDao.update(jobId = job.id, nodeId = Some(busyNode.node.id), taskId = Some(taskId))
         (
           busyNodes.updated(
             agentId,
@@ -412,6 +414,7 @@ private class WorkloadSupervisorActor(
       case None =>
         unusedNodes.get(agentId) match {
           case Some(node) =>
+            jobDao.update(jobId = job.id, nodeId = Some(node.id), taskId = Some(taskId))
             (
               busyNodes.updated(agentId, BusyNode(node.copy(lastUsedAt = Instant.now()), NonEmptyList.of(job))),
               unusedNodes.removed(agentId)
@@ -539,6 +542,19 @@ object WorkloadSupervisorActor {
   case class Update(mesosUpdate: MesosUpdate) extends Message
   case class GetQueue(replyTo: ActorRef[List[Job]]) extends Message
 
+  type JobId = String
+  type NodeId = String
+
+  case class WorkerInfo(workerBehaviour: Behavior[MesosJobActor.Message], jobId: JobId, agentId: AgentID)
+  case class RecoveredState(
+    queue: Queue[Job],
+    workersInfo: Map[TaskID, WorkerInfo],
+    jobIdIndex: Map[JobId, TaskID],
+    busyNodes: Map[AgentID, BusyNode],
+    unusedNodes: Map[AgentID, Node],
+    nodeIdIndex: Map[NodeId, AgentID]
+  )
+
   private case class OfferAccepted(
     offerId: OfferID,
     job: Job,
@@ -558,8 +574,6 @@ object WorkloadSupervisorActor {
   private case class DeallocationPerformed(deallocatedIds: NonEmptyList[DeallocationParams]) extends Message
   private case class DeallocationFailed(error: Throwable, nodeIds: NonEmptyList[DeallocationParams]) extends Message
 
-  private type JobId = String
-  private type NodeId = String
   private type Transition = State => Behavior[Message]
 
   private case class State(
@@ -581,12 +595,20 @@ object WorkloadSupervisorActor {
     jobDao: JobDao,
     clusterChangeDecisionMaker: ClusterScaleDecisionMaker,
     mesosClusterManager: MesosClusterManager,
-    clusterScaleTickPeriod: FiniteDuration
+    clusterScaleTickPeriod: FiniteDuration,
+    recoveredState: RecoveredState
   )(implicit ec: ExecutionContext): Behavior[Message] =
     Behaviors.setup { context =>
       Behaviors.withTimers { timers =>
         mesosFrameworkActor ! MesosFrameworkActor.SubscribeToMesosOffers(context.messageAdapter(Offers(_)))
         mesosFrameworkActor ! MesosFrameworkActor.SubscribeToMesosUpdates(context.messageAdapter(Update(_)))
+
+        val workers = recoveredState.workersInfo.foldLeft(Map.empty[TaskID, Worker]) {
+          case (soFar, (taskId, workerInfo)) =>
+            val worker = context.spawnAnonymous(workerInfo.workerBehaviour)
+            context.watchWith(worker, WorkerIsDone(taskId))
+            soFar.updated(taskId, Worker(worker, workerInfo.jobId, workerInfo.agentId))
+        }
 
         timers.startTimerWithFixedDelay(ClusterScaleTick, clusterScaleTickPeriod)
 
@@ -600,12 +622,12 @@ object WorkloadSupervisorActor {
           context
         ).readyForOffers(
           State(
-            Queue.empty,
-            Map.empty,
-            Map.empty,
-            Map.empty, // FIXME load from dao
-            Map.empty, // FIXME load from dao
-            Map.empty // FIXME load from dao
+            recoveredState.queue,
+            workers,
+            recoveredState.jobIdIndex,
+            recoveredState.busyNodes,
+            recoveredState.unusedNodes,
+            recoveredState.nodeIdIndex
           )
         )
       }

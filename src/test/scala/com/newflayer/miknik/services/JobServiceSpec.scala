@@ -103,7 +103,7 @@ class JobServiceSpec extends ScalaTestWithActorTestKit with BaseSpec with JobGen
     "delete a job" in forAll { id: String =>
       new Setup {
         dao.delete(id) returnsF true
-        whenReady(service.delete(id))(_.right.value shouldBe ())
+        whenReady(service.delete(id))(_ shouldBe ().asRight)
       }
     }
 
